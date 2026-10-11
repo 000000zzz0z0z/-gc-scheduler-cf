@@ -9,4 +9,4 @@ crons = ["* * * * *"]
 # データ保存領域。id はCloudflareでKVを作ったあとに書き換えます。
 [[kv_namespaces]]
 binding = "GC_KV"
-id = "PLACEHOLDER_REPLACE_ME"
+id = "152d539fffa34fc98d1d74b36851dc5f"
