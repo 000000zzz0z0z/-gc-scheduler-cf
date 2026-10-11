@@ -1,5 +1,5 @@
 // データ保存(Durable Object)と、自動出品の判断ロジック。
-import { computeSlots, dayKey, minuteOfDay, publishDraft, checkSold } from "./gc.mjs";
+import { computeSlots, dayKey, minuteOfDay, publishDraft, jstParts } from "./gc.mjs";
 
 export const DEFAULT_SETTINGS = {
   paused: true,
@@ -7,8 +7,7 @@ export const DEFAULT_SETTINGS = {
   graceMin: 100000, // 事実上無制限(予定を過ぎても出品する)
   minIntervalMin: 30, // ゲームクラブの「30分に1回」制限
   schedule: { mode: "interval", start: "00:00", end: "24:00", count: 15, manual: [] },
-  discordWebhook: "",
-  autoSold: { enabled: false, keywords: ["SOLD OUT", "売り切れ", "取引中"] },
+  autoOptimize: false, // 分析結果を毎日スケジュールに自動反映するか
 };
 const DEFAULT_STATE = { pointer: 0, days: {}, alert: null };
 
@@ -30,7 +29,7 @@ export async function load(env, key) {
     const old = await env.GC_KV.get(key, { type: "json" });
     if (old != null) { await store.put(key, old); v = old; }
   }
-  if (key === "settings") return { ...DEFAULT_SETTINGS, ...(v || {}), schedule: { ...DEFAULT_SETTINGS.schedule, ...(v?.schedule || {}) }, autoSold: { ...DEFAULT_SETTINGS.autoSold, ...(v?.autoSold || {}) } };
+  if (key === "settings") return { ...DEFAULT_SETTINGS, ...(v || {}), schedule: { ...DEFAULT_SETTINGS.schedule, ...(v?.schedule || {}) } };
   if (key === "state") return { ...DEFAULT_STATE, ...(v || {}) };
   if (key === "drafts") return v || [];
   if (key === "secret") return v || {};
@@ -50,12 +49,6 @@ export async function loadLogs(env, limit = 3000) {
   return logs;
 }
 
-export async function notify(settings, content) {
-  if (!settings.discordWebhook) return;
-  try {
-    await fetch(settings.discordWebhook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: content.slice(0, 1900) }) });
-  } catch {}
-}
 
 export function nextDraftIndex(drafts, pointer) {
   const n = drafts.length;
@@ -133,9 +126,7 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
     if (state.alert && STOP_KINDS.includes(state.alert.kind)) state.alert = null;
   } else if (STOP_KINDS.includes(result.kind)) {
     state.alert = { kind: result.kind, message: result.message, at: now };
-    await notify(settings, `⚠️ ゲームクラブ自動出品: ${result.message}`);
   } else {
-    await notify(settings, `⚠️ 出品に失敗しました(${draft.label}): ${result.message}`);
   }
   markSlot(state, result);
   const keys = Object.keys(state.days).sort();
@@ -173,23 +164,36 @@ export async function tick(env, now = Date.now()) {
 
   const out = { due };
   if (due != null) out.publish = await publishNext(env, { now, slot: due });
-  if (settings.autoSold.enabled && now % (10 * 60e3) < 60e3) out.soldChecks = await runSoldChecks(env, now, settings);
+
+  // 10分おきに売れ行きをスキャン(別モジュール)
+  try {
+    const { scanSales } = await import("./analytics.mjs");
+    if (now - (await db(env).get("lastSalesScan") || 0) > 10 * 60e3) {
+      await db(env).put("lastSalesScan", now);
+      out.scan = await scanSales(env, now);
+    }
+  } catch (e) { out.scanError = e.message; }
+
+  // 自動最適化: 1日1回(JST 0:05頃)、分析結果をスケジュールに反映
+  if (settings.autoOptimize) {
+    const p = jstParts(now);
+    const key = dayKey(now);
+    if (p.h === 0 && p.mi < 10 && (await db(env).get("lastOptimize")) !== key) {
+      await db(env).put("lastOptimize", key);
+      try {
+        const { loadData, analyze, recommendSlots, confidence } = await import("./analytics.mjs");
+        const data = await loadData(env);
+        const a = analyze(data, now);
+        if (confidence(a).level !== "low") {
+          const times = recommendSlots(a, { count: settings.dailyLimit });
+          const st = await load(env, "settings");
+          st.schedule = { ...st.schedule, mode: "manual", manual: times };
+          await save(env, "settings", st);
+          out.optimized = times.length;
+        }
+      } catch (e) { out.optimizeError = e.message; }
+    }
+  }
   return out;
 }
 
-async function runSoldChecks(env, now, settings) {
-  const secret = await load(env, "secret");
-  if (!secret.phpsessid) return 0;
-  const store = db(env);
-  const logs = await loadLogs(env, 200);
-  const targets = logs.filter((l) => l.ok && l.url && !l.sold && now - l.at < 7 * 86400e3 && (!l.lastCheckedAt || now - l.lastCheckedAt > 3 * 3600e3)).slice(0, 4);
-  for (const l of targets) {
-    let patch = { lastCheckedAt: now };
-    try {
-      const sold = await checkSold(l.url, secret.phpsessid, settings.autoSold.keywords);
-      if (sold) patch = { ...patch, sold: true, soldAt: now, soldBy: "auto" };
-    } catch {}
-    await store.patchLog(l.id, patch);
-  }
-  return targets.length;
-}

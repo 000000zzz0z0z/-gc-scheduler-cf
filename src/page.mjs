@@ -1,4 +1,4 @@
-// このファイルは build/ から自動生成されます。直接編集しないでください。
+// build/ から自動生成。直接編集しないでください。
 export const PAGE = `<!doctype html>
 <html lang="ja">
 <head>
@@ -141,7 +141,7 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .slots{display:flex;flex-wrap:wrap;gap:7px;margin-top:4px}
 .slot{font-size:12px;padding:4px 10px;border-radius:8px;border:1px solid rgba(57,255,139,.2);color:var(--mut);font-variant-numeric:tabular-nums;letter-spacing:.03em;transition:all .15s}
 .slot.done{background:rgba(57,255,139,.15);border-color:var(--green);color:var(--green);text-shadow:0 0 6px rgba(57,255,139,.5);box-shadow:0 0 10px rgba(57,255,139,.2)}
-.slot.failed{background:rgba(255,45,149,.15);border-color:var(--pink);color:var(--pink);text-shadow:0 0 6px rgba(255,45,149,.5)}
+.slot.failed{background:rgba(255,70,70,.18);border-color:#ff4646;color:#ff6b6b;text-shadow:0 0 7px rgba(255,70,70,.6);box-shadow:0 0 10px rgba(255,70,70,.25)}
 .slot.skipped{color:var(--mut2);text-decoration:line-through;border-color:var(--mut2)}
 .slot.now{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 12px rgba(56,245,230,.5);animation:pulse 1.4s infinite}
 
@@ -203,6 +203,15 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
   *{animation:none!important;transition:none!important}
   body::after{animation:none}
 }
+
+/* 枠の凡例 */
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:11px;color:var(--mut);letter-spacing:.03em}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i.lg{width:12px;height:12px;border-radius:4px;display:inline-block;border:1px solid var(--line)}
+.legend i.lg.done{background:rgba(57,255,139,.2);border-color:var(--green);box-shadow:0 0 6px rgba(57,255,139,.4)}
+.legend i.lg.failed{background:rgba(255,45,149,.2);border-color:var(--pink);box-shadow:0 0 6px rgba(255,45,149,.4)}
+.legend i.lg.now{border-color:var(--cyan);box-shadow:0 0 6px rgba(56,245,230,.5)}
+.legend i.lg.none{border-color:rgba(57,255,139,.2)}
 </style>
 </head>
 <body>
@@ -333,9 +342,14 @@ const KEY = "gc_admin_key";
 let state = null, logs = null, tab = "home", pw = sessionStorage.getItem(KEY) || "";
 
 function hm2str(m) { return \`\${Math.floor(m / 60)}:\${pad(m % 60)}\`; }
-function fmtTime(ms) { const d = new Date(ms); return \`\${pad(d.getHours())}:\${pad(d.getMinutes())}\`; }
-function fmtDate(ms) { const d = new Date(ms), n = new Date(); const t = \`\${pad(d.getHours())}:\${pad(d.getMinutes())}\`; if (d.toDateString() === n.toDateString()) return \`今日 \${t}\`; return \`\${d.getMonth() + 1}/\${d.getDate()} \${t}\`; }
-function ago(ms) { const s = (Date.now() - ms) / 1000; if (s < 90) return "さっき"; if (s < 3600) return \`\${Math.floor(s / 60)}分前\`; if (s < 86400) return \`\${Math.floor(s / 3600)}時間前\`; return \`\${Math.floor(s / 86400)}日前\`; }
+// ===== 時刻はすべて「サーバー(インターネット)の時計」×「日本時間」で扱う =====
+// 端末の時計がずれていても影響しないよう、サーバーの現在時刻との差を記録して補正します。
+let clockOffset = 0;
+const nowMs = () => Date.now() + clockOffset;
+const J = (ms) => { const d = new Date(ms + 9 * 3600e3); return { y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds(), wd: d.getUTCDay() }; };
+function fmtTime(ms) { const d = J(ms); return \`\${pad(d.h)}:\${pad(d.mi)}\`; }
+function fmtDate(ms) { const d = J(ms), n = J(nowMs()); const t = \`\${pad(d.h)}:\${pad(d.mi)}\`; if (d.y === n.y && d.mo === n.mo && d.d === n.d) return \`今日 \${t}\`; return \`\${d.mo}/\${d.d} \${t}\`; }
+function ago(ms) { const s = (nowMs() - ms) / 1000; if (s < 90) return "さっき"; if (s < 3600) return \`\${Math.floor(s / 60)}分前\`; if (s < 86400) return \`\${Math.floor(s / 3600)}時間前\`; return \`\${Math.floor(s / 86400)}日前\`; }
 
 let toastT;
 function toast(msg, bad) {
@@ -385,14 +399,17 @@ function switchTab(t) {
   $$(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
   $$(".tab").forEach((el) => el.classList.add("hide"));
   $("#tab-" + t).classList.remove("hide");
-  if (t === "analysis" && !logs) loadLogs().then(render);
+  if (t === "analysis" && !analyticsData) loadAnalytics().then(render);
   render();
 }
 
 async function refresh(quiet) {
   try {
+    const t0 = Date.now();
     state = await api("/state");
-    if (tab === "analysis" || tab === "home") { if (!logs || !quiet) logs = (await api("/logs")).logs; }
+    clockOffset = state.now - Math.round((t0 + Date.now()) / 2); // 通信にかかった時間の半分を補正
+    if (tab === "home") { if (!logs || !quiet) logs = (await api("/logs")).logs; }
+    if (tab === "analysis" && (!analyticsData || !quiet)) await loadAnalytics();
     render();
   } catch (e) { if (!quiet) toast(e.message, true); }
 }
@@ -401,9 +418,10 @@ async function loadLogs() { logs = (await api("/logs")).logs; }
 function render() {
   if (!state) return;
   const s = state.settings;
-  $("#statusLine").innerHTML = s.paused
+  $("#statusLine").innerHTML = (s.paused
     ? \`<span class="dot pause"></span>停止中\`
-    : \`<span class="dot run"></span>稼働中 ・ 今日 \${state.today.count}/\${s.dailyLimit} 回\`;
+    : \`<span class="dot run"></span>稼働中 ・ 今日 \${state.today.count}/\${s.dailyLimit} 回\`) + \` ・ <span id="clock" title="インターネット(サーバー)の時刻・日本時間"></span>\`;
+  tickClock();
   renderBanners();
   if (tab === "home") renderHome();
   if (tab === "drafts") renderDrafts();
@@ -411,6 +429,13 @@ function render() {
   if (tab === "analysis") renderAnalysis();
   if (tab === "settings") renderSettings();
 }
+
+function tickClock() {
+  const el = document.getElementById("clock"); if (!el) return;
+  const d = J(nowMs());
+  el.textContent = \`\${d.mo}/\${d.d} \${pad(d.h)}:\${pad(d.mi)}:\${pad(d.s)} JST\`;
+}
+setInterval(tickClock, 1000);
 
 function renderBanners() {
   const b = $("#banners"); b.innerHTML = "";
@@ -423,7 +448,7 @@ function renderBanners() {
     b.innerHTML += \`<div class="banner info">はじめに「設定」タブで、ゲームクラブのログイン情報(PHPSESSID)を登録してください。</div>\`;
   }
   const t = state.lastTick;
-  if (t && Date.now() - t > 20 * 60000 && !state.settings.paused) {
+  if (t && nowMs() - t > 20 * 60000 && !state.settings.paused) {
     b.innerHTML += \`<div class="banner warn">自動実行が\${ago(t)}から動いていないようです。Netlifyの Functions → tick のログを確認してください。</div>\`;
   }
 }
@@ -432,13 +457,16 @@ window.clearAlert = async () => { await api("/alert/clear", { method: "POST" });
 // ---- ホーム ----
 function renderHome() {
   const s = state.settings, now = state.now;
-  const curMin = new Date(now).getHours() * 60 + new Date(now).getMinutes();
+  const curMin = J(nowMs()).h * 60 + J(nowMs()).mi;
   const slotHtml = state.slots.map((m) => {
     const st = state.today.slots[m];
-    const cls = st?.status === "done" ? "done" : st?.status === "failed" ? "failed" : st?.status === "skipped" ? "skipped" : "";
+    const cls = st?.status === "done" ? "done" : (st?.status === "failed" || st?.status === "skipped") ? "failed" : "";
     const isNext = !st && m > curMin && state.slots.filter((x) => !state.today.slots[x] && x > curMin)[0] === m;
-    return \`<span class="slot \${cls} \${isNext ? "now" : ""}" title="\${st?.message ? esc(st.message) : ""}">\${hm2str(m)}</span>\`;
+    const mark = st?.status === "done" ? "✓ " : (st?.status === "failed" || st?.status === "skipped") ? "✕ " : "";
+    const tip = st?.message ? esc(st.message) : (st?.status === "done" ? "出品済み" : "");
+    return \`<span class="slot \${cls} \${isNext ? "now" : ""}" title="\${tip}">\${mark}\${hm2str(m)}</span>\`;
   }).join("");
+  const legend = \`<div class="legend"><span><i class="lg done"></i>出品済み</span><span><i class="lg failed"></i>出品されなかった</span><span><i class="lg now"></i>次の予定</span><span><i class="lg none"></i>これから</span></div>\`;
   const nextDraft = state.drafts.find((d) => d.key === state.nextDraftKey);
   const recent = (logs || []).slice(0, 6);
   $("#tab-home").innerHTML = \`
@@ -458,12 +486,9 @@ function renderHome() {
     <div class="card">
       <h2>今日の予定 <span class="q">\${state.slots.length}枠</span></h2>
       <div class="slots">\${slotHtml || "<span class='muted'>時間設定タブで予定を作成してください。</span>"}</div>
+      \${state.slots.length ? legend : ""}
     </div>
-    <div class="card">
-      <h2>手動で今すぐ出品</h2>
-      <div class="muted" style="margin-bottom:10px">予定とは別に、次の下書きを1件すぐ出品します(上限にはカウントされます)。</div>
-      <button class="btn p" id="pubNow" \${!state.session.set || !nextDraft ? "disabled" : ""}>次の1件を出品</button>
-    </div>
+
     <div class="card">
       <h2>最近の記録</h2>
       <div id="homeLogs">\${recent.length ? recent.map(logRow).join("") : "<div class='center'>まだ記録がありません</div>"}</div>
@@ -472,11 +497,7 @@ function renderHome() {
     try { await api("/settings", { method: "POST", body: JSON.stringify({ paused: !e.target.checked }) }); window.Snd&&(e.target.checked?Snd.toggleOn():Snd.toggleOff()); toast(e.target.checked ? "稼働を開始しました" : "停止しました"); refresh(); }
     catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
   };
-  $("#pubNow").onclick = async (e) => {
-    e.target.disabled = true; e.target.textContent = "出品中…";
-    try { const r = await api("/publish", { method: "POST", body: "{}" }); if(r.ok&&window.Snd)Snd.publish(); toast(r.ok ? \`出品しました: \${r.label}\` : \`失敗: \${r.message}\`, !r.ok); logs = null; refresh(); }
-    catch (err) { toast(err.message, true); e.target.disabled = false; e.target.textContent = "次の1件を出品"; }
-  };
+
 }
 
 function logRow(l) {
@@ -491,14 +512,11 @@ function renderDrafts() {
       <div class="top">
         <span class="grip" data-grip>⠿</span>
         <span class="nm">\${esc(d.label)}</span>
-        \${d.repeat ? '<span class="pill rep">繰り返し</span>' : '<span class="pill">1回のみ</span>'}
         \${d.enabled ? "" : '<span class="pill off">無効</span>'}
       </div>
-      <div class="meta">下書き #\${d.draftId}\${d.price ? \` ・ \${Number(d.price).toLocaleString()}円\` : ""} ・ 出品\${d.publishedCount}回\${d.lastPublishedAt ? \` ・ 最終 \${fmtDate(d.lastPublishedAt)}\` : ""}\${d.key === state.nextDraftKey ? " ・ <b style='color:var(--accent)'>次はこれ</b>" : ""}</div>
+      <div class="meta">下書き #\${d.draftId}\${d.price ? \` ・ \${Number(d.price).toLocaleString()}円\` : ""} ・ 出品\${d.publishedCount}回\${d.lastPublishedAt ? \` ・ 最終 \${fmtDate(d.lastPublishedAt)}\` : ""}\${d.key === state.nextDraftKey ? " ・ <b style='color:var(--green)'>次はこれ</b>" : ""}</div>
       <div class="acts">
         <button class="btn sm" data-act="toggle">\${d.enabled ? "無効化" : "有効化"}</button>
-        <button class="btn sm" data-act="repeat">\${d.repeat ? "1回のみに" : "繰り返しに"}</button>
-        <button class="btn sm" data-act="rename">名前変更</button>
         <button class="btn sm" data-act="first">次に出す</button>
         <button class="btn sm gho" data-act="del">削除</button>
       </div>
@@ -521,10 +539,7 @@ function renderDrafts() {
 function addFormHtml() {
   return \`
     <div class="field"><label>表示名(自分用のメモ。空欄なら商品名が入ります)</label><input type="text" id="d_label" placeholder="例: 10年代アカウント A"></div>
-    <div class="row">
-      <div class="field"><label>下書き番号</label><input type="text" id="d_id" inputmode="numeric" placeholder="213159"></div>
-      <div class="field"><label>出品後の扱い</label><select id="d_repeat"><option value="1">繰り返し出品する</option><option value="0">1回だけ出品する</option></select></div>
-    </div>
+    <div class="field"><label>下書き番号</label><input type="text" id="d_id" inputmode="numeric" placeholder="213159"></div>
     <div class="field"><label>出品データ(Payloadの「View source」の内容を丸ごと貼り付け)</label>
       <textarea id="d_raw" rows="5" placeholder="------WebKitFormBoundary...... で始まる内容"></textarea></div>
     <button class="btn p" id="d_add">追加する</button>
@@ -545,7 +560,7 @@ function bindAddForm() {
     if (!draftId || !raw) return toast("下書き番号とデータを入力してください", true);
     btn.disabled = true; btn.textContent = "追加中…";
     try {
-      const r = await api("/drafts", { method: "POST", body: JSON.stringify({ draftId, raw, label: $("#d_label").value, repeat: $("#d_repeat").value === "1" }) });
+      const r = await api("/drafts", { method: "POST", body: JSON.stringify({ draftId, raw, label: $("#d_label").value}) });
       toast(\`追加しました(\${r.fieldCount}項目を読み取り)\`); refresh();
     } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = "追加する"; }
   };
@@ -558,9 +573,7 @@ function bindDraftActs() {
       const act = btn.dataset.act;
       try {
         if (act === "toggle") await api("/drafts/" + key, { method: "PATCH", body: JSON.stringify({ enabled: !d.enabled }) });
-        else if (act === "repeat") await api("/drafts/" + key, { method: "PATCH", body: JSON.stringify({ repeat: !d.repeat }) });
         else if (act === "first") { await api(\`/drafts/\${key}/next\`, { method: "POST", body: "{}" }); toast("次に出品します"); }
-        else if (act === "rename") { const n = prompt("表示名", d.label); if (n == null) return; await api("/drafts/" + key, { method: "PATCH", body: JSON.stringify({ label: n }) }); }
         else if (act === "del") { if (!confirm(\`「\${d.label}」を削除しますか?\`)) return; await api("/drafts/" + key, { method: "DELETE" }); }
         refresh();
       } catch (e) { toast(e.message, true); }
@@ -620,15 +633,6 @@ function renderSchedule() {
       </div>
       <button class="btn p" id="sc_save" style="margin-top:14px">保存する</button>
     </div>
-    <div class="card">
-      <h2>出品の期限</h2>
-      <div class="field"><label>出品してから何時間後を期限にするか</label>
-        <div class="row">
-          <input type="number" id="sc_limit" value="\${s.limitHours}" min="0" max="720" style="flex:0 0 120px">
-          <div class="muted" style="align-self:center;flex:1">0 にすると、下書きに保存された期限をそのまま使います</div>
-        </div>
-      </div>
-      <button class="btn p" id="sc_limitSave">保存する</button>
     </div>\`;
   const upd = () => {
     const slots = previewSlots();
@@ -645,7 +649,6 @@ function renderSchedule() {
     else body.schedule.manual = $("#sc_times").value.split("\\n").map((x) => x.trim()).filter(Boolean);
     try { await api("/settings", { method: "POST", body: JSON.stringify(body) }); toast("保存しました"); refresh(); } catch (e) { toast(e.message, true); }
   };
-  $("#sc_limitSave").onclick = async () => { try { await api("/settings", { method: "POST", body: JSON.stringify({ limitHours: Number($("#sc_limit").value) }) }); toast("保存しました"); refresh(); } catch (e) { toast(e.message, true); } };
 }
 function previewSlots() {
   const n = Math.max(1, Math.min(state.settings.dailyLimit, Number($("#sc_count").value) || 1));
@@ -658,77 +661,98 @@ function previewSlots() {
 }
 
 // ---- 分析 ----
+let analyticsData = null;
+async function loadAnalytics() { analyticsData = await api("/analytics"); }
+
 function renderAnalysis() {
-  if (!logs) { $("#tab-analysis").innerHTML = "<div class='card'><div class='center'>読み込み中…</div></div>"; return; }
-  const sold = logs.filter((l) => l.ok && l.sold && l.soldAt);
-  const listed = logs.filter((l) => l.ok);
-  const byHour = Array.from({ length: 24 }, () => ({ listed: 0, sold: 0, totalMs: 0 }));
-  listed.forEach((l) => byHour[new Date(l.at).getHours()].listed++);
-  sold.forEach((l) => { const h = new Date(l.at).getHours(); byHour[h].sold++; byHour[h].totalMs += l.soldAt - l.at; });
-  const maxRate = Math.max(0.0001, ...byHour.map((b) => (b.listed ? b.sold / b.listed : 0)));
-  const heat = buildHeat();
-  const best = bestHours(5);
+  if (!analyticsData) { $("#tab-analysis").innerHTML = "<div class='card'><div class='center'>分析データを読み込み中…</div></div>"; loadAnalytics().then(render); return; }
+  const a = analyticsData;
+  const conf = a.confidence;
+  const wd = ["日", "月", "火", "水", "木", "金", "土"];
+  const lastScan = a.lastScan ? fmtDate(a.lastScan) : "まだ";
+
+  // 時間帯ランキング(売れやすさスコア順)
+  const hourRank = a.hour.map((c, h) => ({ h, ...c })).filter((x) => x.listed > 0).sort((x, y) => y.rate - x.rate).slice(0, 6);
+  // 曜日ランキング
+  const wdRank = a.wday.map((c, w) => ({ w, rate: c.listed ? c.sold / c.listed : 0, ...c })).filter((x) => x.listed > 0).sort((x, y) => y.rate - x.rate);
 
   $("#tab-analysis").innerHTML = \`
     <div class="card">
-      <h2>概要</h2>
+      <h2>概要 <span class="q">Xアカウントのみ・ゲームクラブの実データ</span></h2>
       <dl class="dl">
-        <dt>出品の総数</dt><dd>\${listed.length} 件</dd>
-        <dt>売れた数(記録済み)</dt><dd>\${sold.length} 件</dd>
-        <dt>平均で売れるまで</dt><dd>\${sold.length ? fmtDur(sold.reduce((a, l) => a + (l.soldAt - l.at), 0) / sold.length) : "—"}</dd>
+        <dt>分析した出品</dt><dd>\${a.totalListed} 件</dd>
+        <dt>売れた数</dt><dd>\${a.totalSold} 件</dd>
+        <dt>全体の売却率</dt><dd>\${(a.globalRate * 100).toFixed(1)} %</dd>
+        <dt>正確な販売時刻</dt><dd>\${a.exactCount} 件</dd>
+        <dt>最終スキャン</dt><dd>\${lastScan}</dd>
       </dl>
-      \${sold.length < 5 ? "<div class='muted' style='margin-top:10px'>※「売れた」記録が増えるほど精度が上がります。下の記録一覧で、売れた出品に印をつけてください。自動判定も設定タブでオンにできます。</div>" : ""}
+      <div class="banner \${conf.level === "high" ? "info" : "warn"}" style="margin-top:12px;margin-bottom:0">
+        <div><b>データの信頼度: \${conf.label}</b><br>\${esc(conf.note)}</div>
+      </div>
     </div>
+
     <div class="card">
       <h2>時間帯 × 曜日(売れやすさ)</h2>
-      <div class="muted" style="margin-bottom:8px">濃いマスほど、その時間に出したものが早く売れています。</div>
-      \${heat}
+      <div class="muted" style="margin-bottom:8px">濃いマスほど、その曜日・時間に出すと売れやすい傾向です。マスに触れると件数が出ます。</div>
+      \${buildHeatV2(a)}
     </div>
+
     <div class="card">
       <h2>売れやすい時間帯 上位</h2>
-      \${best.length ? best.map((h) => { const b = byHour[h]; return \`<div class="log"><span class="t">\${pad(h)}:00</span><span class="m">出品\${b.listed}件 / 売れた\${b.sold}件\${b.sold ? \` ・ 平均 \${fmtDur(b.totalMs / b.sold)}\` : ""}</span></div>\`; }).join("") : "<div class='center'>データがたまると表示されます</div>"}
+      \${hourRank.length ? hourRank.map((x) => \`<div class="log"><span class="t">\${pad(x.h)}:00</span><span class="m">売れやすさ \${(x.rate * 100).toFixed(0)}% ・ 出品\${x.listed}件/売れた\${x.sold}件\${x.medHours ? \` ・ 中央\${x.medHours.toFixed(1)}時間で成約\` : ""}\${x.avgViews ? \` ・ 平均閲覧\${x.avgViews.toFixed(0)}\` : ""}</span></div>\`).join("") : "<div class='center'>データがたまると表示されます</div>"}
     </div>
+
     <div class="card">
-      <h2>記録一覧 <span class="q">売れたら印をつけてください</span></h2>
-      <div id="logList">\${logs.slice(0, 100).map(fullLogRow).join("") || "<div class='center'>記録なし</div>"}</div>
+      <h2>曜日別</h2>
+      \${wdRank.length ? wdRank.map((x) => \`<div class="log"><span class="t">\${wd[x.w]}曜</span><span class="m">売却率 \${(x.rate * 100).toFixed(0)}% ・ 出品\${x.listed}件/売れた\${x.sold}件</span></div>\`).join("") : "<div class='center'>データがたまると表示されます</div>"}
+    </div>
+
+    <div class="card">
+      <h2>おすすめスケジュール</h2>
+      <div class="muted" style="margin-bottom:10px">分析から、売れやすい時間帯に寄せた\${a.recommend.length}枠の出品時刻です。</div>
+      <div class="slots">\${a.recommend.map((t) => \`<span class="slot">\${t}</span>\`).join("")}</div>
+      <button class="btn p" id="an_apply" style="margin-top:14px" \${conf.level === "low" ? "disabled" : ""}>この時刻を時間設定に反映する</button>
+      \${conf.level === "low" ? "<div class='muted' style='margin-top:8px'>データが集まるまで反映はできません。</div>" : ""}
+    </div>
+
+    <div class="card">
+      <h2>今すぐデータ更新</h2>
+      <div class="muted" style="margin-bottom:10px">通常は10分おきに自動で集計されます。すぐ最新にしたいときに押してください(少し時間がかかります)。</div>
+      <button class="btn" id="an_scan">今すぐスキャン</button>
+      <div class="muted" id="an_scanMsg" style="margin-top:8px"></div>
     </div>\`;
-  $$("#logList [data-sold]").forEach((b) => b.onclick = async () => {
-    const id = b.dataset.sold, l = logs.find((x) => x.id === id);
-    try { await api("/logs/" + id, { method: "PATCH", body: JSON.stringify({ sold: !l.sold }) }); l.sold = !l.sold; l.soldAt = l.sold ? Date.now() : null; render(); } catch (e) { toast(e.message, true); }
-  });
+
+  if ($("#an_apply")) $("#an_apply").onclick = async () => {
+    try { const r = await api("/analytics/apply", { method: "POST", body: "{}" }); toast(\`\${r.times.length}枠を反映しました\`); refresh(); } catch (e) { toast(e.message, true); }
+  };
+  $("#an_scan").onclick = async (e) => {
+    e.target.disabled = true; $("#an_scanMsg").textContent = "スキャン中…(最大1分)";
+    try { const r = await api("/scan", { method: "POST", body: "{}" }); $("#an_scanMsg").textContent = r.skipped ? \`スキップ: \${r.skipped}\` : \`完了(出品中\${r.onsale}・取引中\${r.trading}・新たに売れた\${r.newlySold})\`; await loadAnalytics(); render(); }
+    catch (err) { $("#an_scanMsg").textContent = err.message; }
+    e.target.disabled = false;
+  };
 }
-function fullLogRow(l) {
-  return \`<div class="log"><span class="ico \${l.ok ? "ok" : "ng"}"></span><span class="t">\${fmtDate(l.at)}</span><span class="m">\${esc(l.label)}\${l.ok ? "" : \`<br><span class="muted">\${esc(l.message || "")}</span>\`}</span>\${l.ok ? \`<button class="btn sm \${l.sold ? "p" : "gho"}" data-sold="\${l.id}">\${l.sold ? "売れた✓" : "売れた?"}</button>\` : ""}</div>\`;
-}
-function buildHeat() {
+
+function buildHeatV2(a) {
   const wd = ["日", "月", "火", "水", "木", "金", "土"];
-  const cell = {}; // wd-hourbucket -> {listed, totalMs, sold}
-  logs.filter((l) => l.ok).forEach((l) => { const d = new Date(l.at), k = d.getDay() + "-" + d.getHours(); (cell[k] ||= { listed: 0, sold: 0, totalMs: 0 }).listed++; if (l.sold && l.soldAt) { cell[k].sold++; cell[k].totalMs += l.soldAt - l.at; } });
   let max = 0.0001;
-  Object.values(cell).forEach((c) => { if (c.listed) max = Math.max(max, c.sold / c.listed); });
+  for (const k in a.score) if (a.score[k].listed > 0) max = Math.max(max, a.score[k].rate);
   let html = '<div class="heat"><table><tr><th></th>';
   for (let h = 0; h < 24; h += 2) html += \`<th colspan="2">\${h}</th>\`;
   html += "</tr>";
   for (let w = 0; w < 7; w++) {
     html += \`<tr><th>\${wd[w]}</th>\`;
     for (let h = 0; h < 24; h++) {
-      const c = cell[w + "-" + h];
-      const rate = c && c.listed ? c.sold / c.listed : -1;
-      const alpha = rate < 0 ? 0 : 0.12 + 0.88 * (rate / max);
-      const bg = rate < 0 ? (c ? "var(--panel2)" : "transparent") : \`rgba(255,90,60,\${alpha})\`;
-      const title = c ? \`\${wd[w]} \${h}時: 出品\${c.listed} 売れた\${c.sold}\` : "";
+      const c = a.score[w + "-" + h];
+      const has = c && c.listed > 0;
+      const alpha = has ? 0.12 + 0.88 * (c.rate / max) : 0;
+      const bg = has ? \`rgba(255,45,149,\${alpha})\` : "transparent";
+      const title = has ? \`\${wd[w]} \${h}時: 出品\${c.listed} 売れた\${c.sold} (\${(c.rate * 100).toFixed(0)}%)\` : \`\${wd[w]} \${h}時: データなし\`;
       html += \`<td class="c" style="background:\${bg}" title="\${title}"></td>\`;
     }
     html += "</tr>";
   }
   return html + "</table></div>";
-}
-function bestHours(n) {
-  if (!logs) return [];
-  const byHour = Array.from({ length: 24 }, () => ({ listed: 0, sold: 0, totalMs: 0 }));
-  logs.filter((l) => l.ok).forEach((l) => { const h = new Date(l.at).getHours(); byHour[h].listed++; if (l.sold && l.soldAt) { byHour[h].sold++; byHour[h].totalMs += l.soldAt - l.at; } });
-  const scored = byHour.map((b, h) => ({ h, score: b.sold ? (b.sold / b.listed) * 1000 - (b.totalMs / b.sold) / 60000 : -1, sold: b.sold }));
-  return scored.filter((x) => x.sold > 0).sort((a, b) => b.score - a.score).slice(0, n).map((x) => x.h);
 }
 function fmtDur(ms) { const h = ms / 3600e3; if (h < 1) return \`\${Math.round(ms / 60e3)}分\`; if (h < 24) return \`\${h.toFixed(1)}時間\`; return \`\${(h / 24).toFixed(1)}日\`; }
 
@@ -756,33 +780,15 @@ function renderSettings() {
       </div></details>
     </div>
     <div class="card">
-      <h2>売れたかの自動判定</h2>
-      <label class="switch" style="margin-bottom:12px"><input type="checkbox" id="st_auto" \${s.autoSold.enabled ? "checked" : ""}><span class="track"></span><span>出品ページを定期的に見て、売り切れを自動で記録する</span></label>
-      <div class="field"><label>売り切れと判断する言葉(カンマ区切り)</label><input type="text" id="st_kw" value="\${esc(s.autoSold.keywords.join(", "))}"></div>
-      <button class="btn p" id="st_autoSave">保存</button>
-      <div class="muted" style="margin-top:8px">※ページの文言と違うと誤判定します。実際の売り切れ表示を確認してから使ってください。</div>
+      <h2>スケジュールの自動最適化</h2>
+      <label class="switch" style="margin-bottom:10px"><input type="checkbox" id="st_opt" \${s.autoOptimize ? "checked" : ""}><span class="track"></span><span>毎日0時に、分析結果を時間設定へ自動反映する</span></label>
+      <div class="muted">オンにすると、売れやすい時間帯に15枠を自動で寄せ直します。オフなら手動のままです(分析タブからいつでも手動反映できます)。データが少ないうちは自動反映されません。</div>
     </div>
-    <div class="card">
-      <h2>通知(任意)</h2>
-      <div class="field"><label>Discord Webhook URL</label><input type="text" id="st_hook" value="\${esc(s.discordWebhook)}" placeholder="https://discord.com/api/webhooks/..."></div>
-      <button class="btn p" id="st_hookSave">保存</button>
-      <div class="muted" style="margin-top:8px">ログイン切れやアクセス拒否、出品失敗のときに通知します。</div>
-    </div>
-    <div class="card">
-      <h2>その他</h2>
-      <div class="row">
-        <div class="field"><label>1日の上限回数</label><input type="number" id="st_limit" value="\${s.dailyLimit}" min="1" max="15"></div>
-        <div class="field"><label>遅れ許容(分)</label><input type="number" id="st_grace" value="\${s.graceMin}" min="5" max="90"></div>
-      </div>
-      <div class="muted" style="margin-bottom:10px">予定時刻を過ぎても、この分数以内なら出品します(サーバーは5分おきに動くため少しずれます)。</div>
-      <button class="btn p" id="st_miscSave">保存</button>
-    </div>\`;
+  \`;
+  $("#st_opt").onchange = async (e) => { try { await api("/settings", { method: "POST", body: JSON.stringify({ autoOptimize: e.target.checked }) }); window.Snd&&(e.target.checked?Snd.toggleOn():Snd.toggleOff()); toast("保存しました"); refresh(); } catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; } };
   $("#st_sessSave").onclick = async () => { const v = $("#st_sess").value.trim(); if (!v) return toast("値を入力してください", true); try { await api("/session", { method: "POST", body: JSON.stringify({ phpsessid: v }) }); toast("保存しました"); $("#st_sess").value = ""; refresh(); } catch (e) { toast(e.message, true); } };
   if ($("#st_sessDel")) $("#st_sessDel").onclick = async () => { if (!confirm("削除しますか?")) return; await api("/session", { method: "DELETE" }); toast("削除しました"); refresh(); };
   $("#st_test").onclick = async (e) => { e.target.disabled = true; $("#st_testMsg").textContent = "確認中…"; try { const r = await api("/test", { method: "POST", body: "{}" }); window.Snd&&(r.ok?Snd.success():Snd.fail()); $("#st_testMsg").innerHTML = \`<span style="color:var(--\${r.ok ? "ok" : "bad"})">\${r.ok ? "✓ " : "✕ "}\${esc(r.message)}</span>\`; } catch (err) { $("#st_testMsg").textContent = err.message; } e.target.disabled = false; };
-  $("#st_autoSave").onclick = async () => { try { await api("/settings", { method: "POST", body: JSON.stringify({ autoSold: { enabled: $("#st_auto").checked, keywords: $("#st_kw").value.split(",").map((x) => x.trim()).filter(Boolean) } }) }); toast("保存しました"); refresh(); } catch (e) { toast(e.message, true); } };
-  $("#st_hookSave").onclick = async () => { try { await api("/settings", { method: "POST", body: JSON.stringify({ discordWebhook: $("#st_hook").value.trim() }) }); toast("保存しました"); refresh(); } catch (e) { toast(e.message, true); } };
-  $("#st_miscSave").onclick = async () => { try { await api("/settings", { method: "POST", body: JSON.stringify({ dailyLimit: Number($("#st_limit").value), graceMin: Number($("#st_grace").value) }) }); toast("保存しました"); refresh(); } catch (e) { toast(e.message, true); } };
 }
 
 if (pw) { fetch("/api/state", { headers: { "x-admin-key": encodeURIComponent(pw) } }).then((r) => { if (r.ok) start(); else { sessionStorage.removeItem(KEY); } }); }

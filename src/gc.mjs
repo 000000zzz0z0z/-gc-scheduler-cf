@@ -206,11 +206,3 @@ export async function testConnection(session) {
     : { ok: false, kind: "session", status: 200, message: `ページは開けましたが、ログイン状態を確認できませんでした(ページ名: ${title || "不明"})` };
 }
 
-export async function checkSold(url, session, keywords) {
-  const path = url.replace(GC, "");
-  const res = await gcFetch(path, session, { headers: { Accept: "text/html" } });
-  const r = await readRes(res);
-  if (r.kind !== "ok" || res.status !== 200) return null;
-  const text = plain(r.text);
-  return keywords.some((k) => k && text.includes(k));
-}

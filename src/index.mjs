@@ -32,6 +32,7 @@ const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n)
 function mergeSettings(cur, body) {
   const s = JSON.parse(JSON.stringify(cur));
   if ("paused" in body) s.paused = !!body.paused;
+  if ("autoOptimize" in body) s.autoOptimize = !!body.autoOptimize;
   if (body.schedule) {
     const sc = body.schedule;
     if (sc.mode && !["interval", "manual"].includes(sc.mode)) throw new Error("スケジュールの方式が正しくありません。");
@@ -40,14 +41,6 @@ function mergeSettings(cur, body) {
     if (sc.manual) { const bad = sc.manual.filter((t) => !isHM(t) || t === "24:00"); if (bad.length) throw new Error(`時刻の形式が正しくありません: ${bad.join(", ")}`); }
     s.schedule = { ...s.schedule, ...sc };
     if ("count" in sc) s.schedule.count = clamp(sc.count, 1, 15, cur.schedule.count);
-  }
-  if ("discordWebhook" in body) {
-    const w = String(body.discordWebhook || "").trim();
-    if (w && !/^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\//.test(w)) throw new Error("通知先はDiscordのWebhook URLを入力してください。");
-    s.discordWebhook = w;
-  }
-  if (body.autoSold) {
-    s.autoSold = { enabled: !!body.autoSold.enabled, keywords: Array.isArray(body.autoSold.keywords) ? body.autoSold.keywords.map((k) => String(k).trim()).filter(Boolean).slice(0, 10) : cur.autoSold.keywords };
   }
   return s;
 }
@@ -150,6 +143,28 @@ async function handleApi(request, env, path) {
       const l = await db(env).patchLog(sub[1], { sold, soldAt: sold ? Number(body.soldAt) || Date.now() : null, soldBy: sold ? "manual" : null });
       if (!l) throw new Error("記録が見つかりません。");
       return json({ ok: true });
+    }
+
+    if (method === "GET" && sub[0] === "analytics") {
+      const { loadData, analyze, recommendSlots, confidence } = await import("./analytics.mjs");
+      const data = await loadData(env);
+      const a = analyze(data);
+      const settings = await load(env, "settings");
+      return json({ ...a, confidence: confidence(a), recommend: recommendSlots(a, { count: settings.dailyLimit }), lastScan: data.lastScan, imported: data.importedHistory });
+    }
+    if (method === "POST" && sub[0] === "analytics" && sub[1] === "apply") {
+      const { loadData, analyze, recommendSlots } = await import("./analytics.mjs");
+      const data = await loadData(env);
+      const settings = await load(env, "settings");
+      const times = recommendSlots(analyze(data), { count: settings.dailyLimit });
+      settings.schedule = { ...settings.schedule, mode: "manual", manual: times };
+      await save(env, "settings", settings);
+      return json({ ok: true, times });
+    }
+    if (method === "POST" && sub[0] === "scan") {
+      const { scanSales } = await import("./analytics.mjs");
+      await db(env).put("lastSalesScan", Date.now());
+      return json(await scanSales(env));
     }
 
     return json({ error: "見つかりません。" }, 404);
