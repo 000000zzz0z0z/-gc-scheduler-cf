@@ -97,10 +97,11 @@ export function buildMultipart(fields) {
   return { body: new TextEncoder().encode(out), contentType: `multipart/form-data; boundary=${b}` };
 }
 
-// 出品期限(limit_day / limit_time)を出品時刻から自動計算。limitHours=0 なら下書きの値のまま
-export function prepareFields(fields, now, limitHours) {
-  if (!limitHours) return fields;
-  const p = jstParts(now + limitHours * 3600e3);
+// 出品期限(limit_day / limit_time)を常に遠い未来(約100年後)に設定する。
+// ゲームクラブのフォームは日時が必須のため「無期限」そのものにはできないが、
+// 100年後にすることで、期限切れで出品が消えることは実質なくなる。
+export function prepareFields(fields, now) {
+  const p = jstParts(now + 100 * 365 * 24 * 3600e3);
   return fields.map((f) => {
     if (f.name === "limit_day") return { ...f, value: `${p.y}-${pad(p.mo)}-${pad(p.d)}` };
     if (f.name === "limit_time") return { ...f, value: String(p.h) };
@@ -148,8 +149,8 @@ function summarizeErrors(j) {
   return msg || "応答: " + JSON.stringify(j).slice(0, 300);
 }
 
-export async function publishDraft(draft, session, { limitHours = 24, now = Date.now() } = {}) {
-  const fields = prepareFields(draft.fields, now, limitHours);
+export async function publishDraft(draft, session, { now = Date.now() } = {}) {
+  const fields = prepareFields(draft.fields, now);
   const { body, contentType } = buildMultipart(fields);
   const path = `/mypage/products/add?draft=${encodeURIComponent(draft.draftId)}`;
   let res;

@@ -124,10 +124,13 @@ function renderHome() {
   const curMin = J(nowMs()).h * 60 + J(nowMs()).mi;
   const slotHtml = state.slots.map((m) => {
     const st = state.today.slots[m];
-    const cls = st?.status === "done" ? "done" : st?.status === "failed" ? "failed" : st?.status === "skipped" ? "skipped" : "";
+    const cls = st?.status === "done" ? "done" : (st?.status === "failed" || st?.status === "skipped") ? "failed" : "";
     const isNext = !st && m > curMin && state.slots.filter((x) => !state.today.slots[x] && x > curMin)[0] === m;
-    return `<span class="slot ${cls} ${isNext ? "now" : ""}" title="${st?.message ? esc(st.message) : ""}">${hm2str(m)}</span>`;
+    const mark = st?.status === "done" ? "✓ " : (st?.status === "failed" || st?.status === "skipped") ? "✕ " : "";
+    const tip = st?.message ? esc(st.message) : (st?.status === "done" ? "出品済み" : "");
+    return `<span class="slot ${cls} ${isNext ? "now" : ""}" title="${tip}">${mark}${hm2str(m)}</span>`;
   }).join("");
+  const legend = `<div class="legend"><span><i class="lg done"></i>出品済み</span><span><i class="lg failed"></i>出品されなかった</span><span><i class="lg now"></i>次の予定</span><span><i class="lg none"></i>これから</span></div>`;
   const nextDraft = state.drafts.find((d) => d.key === state.nextDraftKey);
   const recent = (logs || []).slice(0, 6);
   $("#tab-home").innerHTML = `
@@ -147,12 +150,9 @@ function renderHome() {
     <div class="card">
       <h2>今日の予定 <span class="q">${state.slots.length}枠</span></h2>
       <div class="slots">${slotHtml || "<span class='muted'>時間設定タブで予定を作成してください。</span>"}</div>
+      ${state.slots.length ? legend : ""}
     </div>
-    <div class="card">
-      <h2>手動で今すぐ出品</h2>
-      <div class="muted" style="margin-bottom:10px">予定とは別に、次の下書きを1件すぐ出品します(上限にはカウントされます)。</div>
-      <button class="btn p" id="pubNow" ${!state.session.set || !nextDraft ? "disabled" : ""}>次の1件を出品</button>
-    </div>
+
     <div class="card">
       <h2>最近の記録</h2>
       <div id="homeLogs">${recent.length ? recent.map(logRow).join("") : "<div class='center'>まだ記録がありません</div>"}</div>
@@ -161,11 +161,7 @@ function renderHome() {
     try { await api("/settings", { method: "POST", body: JSON.stringify({ paused: !e.target.checked }) }); window.Snd&&(e.target.checked?Snd.toggleOn():Snd.toggleOff()); toast(e.target.checked ? "稼働を開始しました" : "停止しました"); refresh(); }
     catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
   };
-  $("#pubNow").onclick = async (e) => {
-    e.target.disabled = true; e.target.textContent = "出品中…";
-    try { const r = await api("/publish", { method: "POST", body: "{}" }); if(r.ok&&window.Snd)Snd.publish(); toast(r.ok ? `出品しました: ${r.label}` : `失敗: ${r.message}`, !r.ok); logs = null; refresh(); }
-    catch (err) { toast(err.message, true); e.target.disabled = false; e.target.textContent = "次の1件を出品"; }
-  };
+
 }
 
 function logRow(l) {
@@ -180,14 +176,11 @@ function renderDrafts() {
       <div class="top">
         <span class="grip" data-grip>⠿</span>
         <span class="nm">${esc(d.label)}</span>
-        ${d.repeat ? '<span class="pill rep">繰り返し</span>' : '<span class="pill">1回のみ</span>'}
         ${d.enabled ? "" : '<span class="pill off">無効</span>'}
       </div>
-      <div class="meta">下書き #${d.draftId}${d.price ? ` ・ ${Number(d.price).toLocaleString()}円` : ""} ・ 出品${d.publishedCount}回${d.lastPublishedAt ? ` ・ 最終 ${fmtDate(d.lastPublishedAt)}` : ""}${d.key === state.nextDraftKey ? " ・ <b style='color:var(--accent)'>次はこれ</b>" : ""}</div>
+      <div class="meta">下書き #${d.draftId}${d.price ? ` ・ ${Number(d.price).toLocaleString()}円` : ""} ・ 出品${d.publishedCount}回${d.lastPublishedAt ? ` ・ 最終 ${fmtDate(d.lastPublishedAt)}` : ""}${d.key === state.nextDraftKey ? " ・ <b style='color:var(--green)'>次はこれ</b>" : ""}</div>
       <div class="acts">
         <button class="btn sm" data-act="toggle">${d.enabled ? "無効化" : "有効化"}</button>
-        <button class="btn sm" data-act="repeat">${d.repeat ? "1回のみに" : "繰り返しに"}</button>
-        <button class="btn sm" data-act="rename">名前変更</button>
         <button class="btn sm" data-act="first">次に出す</button>
         <button class="btn sm gho" data-act="del">削除</button>
       </div>
@@ -210,10 +203,7 @@ function renderDrafts() {
 function addFormHtml() {
   return `
     <div class="field"><label>表示名(自分用のメモ。空欄なら商品名が入ります)</label><input type="text" id="d_label" placeholder="例: 10年代アカウント A"></div>
-    <div class="row">
-      <div class="field"><label>下書き番号</label><input type="text" id="d_id" inputmode="numeric" placeholder="213159"></div>
-      <div class="field"><label>出品後の扱い</label><select id="d_repeat"><option value="1">繰り返し出品する</option><option value="0">1回だけ出品する</option></select></div>
-    </div>
+    <div class="field"><label>下書き番号</label><input type="text" id="d_id" inputmode="numeric" placeholder="213159"></div>
     <div class="field"><label>出品データ(Payloadの「View source」の内容を丸ごと貼り付け)</label>
       <textarea id="d_raw" rows="5" placeholder="------WebKitFormBoundary...... で始まる内容"></textarea></div>
     <button class="btn p" id="d_add">追加する</button>
@@ -234,7 +224,7 @@ function bindAddForm() {
     if (!draftId || !raw) return toast("下書き番号とデータを入力してください", true);
     btn.disabled = true; btn.textContent = "追加中…";
     try {
-      const r = await api("/drafts", { method: "POST", body: JSON.stringify({ draftId, raw, label: $("#d_label").value, repeat: $("#d_repeat").value === "1" }) });
+      const r = await api("/drafts", { method: "POST", body: JSON.stringify({ draftId, raw, label: $("#d_label").value}) });
       toast(`追加しました(${r.fieldCount}項目を読み取り)`); refresh();
     } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = "追加する"; }
   };
@@ -247,9 +237,7 @@ function bindDraftActs() {
       const act = btn.dataset.act;
       try {
         if (act === "toggle") await api("/drafts/" + key, { method: "PATCH", body: JSON.stringify({ enabled: !d.enabled }) });
-        else if (act === "repeat") await api("/drafts/" + key, { method: "PATCH", body: JSON.stringify({ repeat: !d.repeat }) });
         else if (act === "first") { await api(`/drafts/${key}/next`, { method: "POST", body: "{}" }); toast("次に出品します"); }
-        else if (act === "rename") { const n = prompt("表示名", d.label); if (n == null) return; await api("/drafts/" + key, { method: "PATCH", body: JSON.stringify({ label: n }) }); }
         else if (act === "del") { if (!confirm(`「${d.label}」を削除しますか?`)) return; await api("/drafts/" + key, { method: "DELETE" }); }
         refresh();
       } catch (e) { toast(e.message, true); }
@@ -309,15 +297,6 @@ function renderSchedule() {
       </div>
       <button class="btn p" id="sc_save" style="margin-top:14px">保存する</button>
     </div>
-    <div class="card">
-      <h2>出品の期限</h2>
-      <div class="field"><label>出品してから何時間後を期限にするか</label>
-        <div class="row">
-          <input type="number" id="sc_limit" value="${s.limitHours}" min="0" max="720" style="flex:0 0 120px">
-          <div class="muted" style="align-self:center;flex:1">0 にすると、下書きに保存された期限をそのまま使います</div>
-        </div>
-      </div>
-      <button class="btn p" id="sc_limitSave">保存する</button>
     </div>`;
   const upd = () => {
     const slots = previewSlots();
@@ -334,7 +313,6 @@ function renderSchedule() {
     else body.schedule.manual = $("#sc_times").value.split("\n").map((x) => x.trim()).filter(Boolean);
     try { await api("/settings", { method: "POST", body: JSON.stringify(body) }); toast("保存しました"); refresh(); } catch (e) { toast(e.message, true); }
   };
-  $("#sc_limitSave").onclick = async () => { try { await api("/settings", { method: "POST", body: JSON.stringify({ limitHours: Number($("#sc_limit").value) }) }); toast("保存しました"); refresh(); } catch (e) { toast(e.message, true); } };
 }
 function previewSlots() {
   const n = Math.max(1, Math.min(state.settings.dailyLimit, Number($("#sc_count").value) || 1));
@@ -451,27 +429,12 @@ function renderSettings() {
       <button class="btn p" id="st_autoSave">保存</button>
       <div class="muted" style="margin-top:8px">※ページの文言と違うと誤判定します。実際の売り切れ表示を確認してから使ってください。</div>
     </div>
-    <div class="card">
-      <h2>通知(任意)</h2>
-      <div class="field"><label>Discord Webhook URL</label><input type="text" id="st_hook" value="${esc(s.discordWebhook)}" placeholder="https://discord.com/api/webhooks/..."></div>
-      <button class="btn p" id="st_hookSave">保存</button>
-      <div class="muted" style="margin-top:8px">ログイン切れやアクセス拒否、出品失敗のときに通知します。</div>
-    </div>
-    <div class="card">
-      <h2>その他</h2>
-      <div class="row">
-        <div class="field"><label>1日の上限回数</label><input type="number" id="st_limit" value="${s.dailyLimit}" min="1" max="15"></div>
-        <div class="field"><label>遅れ許容(分)</label><input type="number" id="st_grace" value="${s.graceMin}" min="5" max="90"></div>
-      </div>
-      <div class="muted" style="margin-bottom:10px">予定時刻を過ぎても、この分数以内なら出品します(サーバーは5分おきに動くため少しずれます)。</div>
-      <button class="btn p" id="st_miscSave">保存</button>
-    </div>`;
+
+`;
   $("#st_sessSave").onclick = async () => { const v = $("#st_sess").value.trim(); if (!v) return toast("値を入力してください", true); try { await api("/session", { method: "POST", body: JSON.stringify({ phpsessid: v }) }); toast("保存しました"); $("#st_sess").value = ""; refresh(); } catch (e) { toast(e.message, true); } };
   if ($("#st_sessDel")) $("#st_sessDel").onclick = async () => { if (!confirm("削除しますか?")) return; await api("/session", { method: "DELETE" }); toast("削除しました"); refresh(); };
   $("#st_test").onclick = async (e) => { e.target.disabled = true; $("#st_testMsg").textContent = "確認中…"; try { const r = await api("/test", { method: "POST", body: "{}" }); window.Snd&&(r.ok?Snd.success():Snd.fail()); $("#st_testMsg").innerHTML = `<span style="color:var(--${r.ok ? "ok" : "bad"})">${r.ok ? "✓ " : "✕ "}${esc(r.message)}</span>`; } catch (err) { $("#st_testMsg").textContent = err.message; } e.target.disabled = false; };
   $("#st_autoSave").onclick = async () => { try { await api("/settings", { method: "POST", body: JSON.stringify({ autoSold: { enabled: $("#st_auto").checked, keywords: $("#st_kw").value.split(",").map((x) => x.trim()).filter(Boolean) } }) }); toast("保存しました"); refresh(); } catch (e) { toast(e.message, true); } };
-  $("#st_hookSave").onclick = async () => { try { await api("/settings", { method: "POST", body: JSON.stringify({ discordWebhook: $("#st_hook").value.trim() }) }); toast("保存しました"); refresh(); } catch (e) { toast(e.message, true); } };
-  $("#st_miscSave").onclick = async () => { try { await api("/settings", { method: "POST", body: JSON.stringify({ dailyLimit: Number($("#st_limit").value), graceMin: Number($("#st_grace").value) }) }); toast("保存しました"); refresh(); } catch (e) { toast(e.message, true); } };
 }
 
 if (pw) { fetch("/api/state", { headers: { "x-admin-key": encodeURIComponent(pw) } }).then((r) => { if (r.ok) start(); else { sessionStorage.removeItem(KEY); } }); }

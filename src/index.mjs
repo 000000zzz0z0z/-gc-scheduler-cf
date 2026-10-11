@@ -32,9 +32,6 @@ const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n)
 function mergeSettings(cur, body) {
   const s = JSON.parse(JSON.stringify(cur));
   if ("paused" in body) s.paused = !!body.paused;
-  if ("dailyLimit" in body) s.dailyLimit = clamp(body.dailyLimit, 1, 15, cur.dailyLimit);
-  if ("graceMin" in body) s.graceMin = clamp(body.graceMin, 2, 90, cur.graceMin);
-  if ("limitHours" in body) s.limitHours = clamp(body.limitHours, 0, 720, cur.limitHours);
   if (body.schedule) {
     const sc = body.schedule;
     if (sc.mode && !["interval", "manual"].includes(sc.mode)) throw new Error("スケジュールの方式が正しくありません。");
@@ -106,7 +103,7 @@ async function handleApi(request, env, path) {
         if (!/^\d+$/.test(draftId)) throw new Error("下書き番号は数字で入力してください(URLの draft= の後ろの数字です)。");
         const fields = parseMultipart(body.raw);
         const title = fields.find((f) => f.name === "name")?.value || "";
-        const d = { key: uuid(), label: String(body.label || "").trim() || title.slice(0, 40) || `下書き${draftId}`, draftId, fields, repeat: body.repeat !== false, enabled: true, publishedCount: 0, createdAt: Date.now() };
+        const d = { key: uuid(), label: String(body.label || "").trim() || title.slice(0, 40) || `下書き${draftId}`, draftId, fields, repeat: true, enabled: true, publishedCount: 0, createdAt: Date.now() };
         drafts.push(d);
         await save(env, "drafts", drafts);
         return json({ ok: true, draft: draftSummary(d), fieldCount: fields.length });
@@ -132,7 +129,6 @@ async function handleApi(request, env, path) {
       if (method === "PATCH") {
         if ("label" in body) d.label = String(body.label).trim() || d.label;
         if ("enabled" in body) d.enabled = !!body.enabled;
-        if ("repeat" in body) d.repeat = !!body.repeat;
         if ("draftId" in body) { if (!/^\d+$/.test(String(body.draftId))) throw new Error("下書き番号は数字で入力してください。"); d.draftId = String(body.draftId); }
         if (body.raw) d.fields = parseMultipart(body.raw);
         await save(env, "drafts", drafts);

@@ -133,7 +133,7 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .slots{display:flex;flex-wrap:wrap;gap:7px;margin-top:4px}
 .slot{font-size:12px;padding:4px 10px;border-radius:8px;border:1px solid rgba(57,255,139,.2);color:var(--mut);font-variant-numeric:tabular-nums;letter-spacing:.03em;transition:all .15s}
 .slot.done{background:rgba(57,255,139,.15);border-color:var(--green);color:var(--green);text-shadow:0 0 6px rgba(57,255,139,.5);box-shadow:0 0 10px rgba(57,255,139,.2)}
-.slot.failed{background:rgba(255,45,149,.15);border-color:var(--pink);color:var(--pink);text-shadow:0 0 6px rgba(255,45,149,.5)}
+.slot.failed{background:rgba(255,70,70,.18);border-color:#ff4646;color:#ff6b6b;text-shadow:0 0 7px rgba(255,70,70,.6);box-shadow:0 0 10px rgba(255,70,70,.25)}
 .slot.skipped{color:var(--mut2);text-decoration:line-through;border-color:var(--mut2)}
 .slot.now{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 12px rgba(56,245,230,.5);animation:pulse 1.4s infinite}
 
@@ -195,3 +195,12 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
   *{animation:none!important;transition:none!important}
   body::after{animation:none}
 }
+
+/* 枠の凡例 */
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:11px;color:var(--mut);letter-spacing:.03em}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i.lg{width:12px;height:12px;border-radius:4px;display:inline-block;border:1px solid var(--line)}
+.legend i.lg.done{background:rgba(57,255,139,.2);border-color:var(--green);box-shadow:0 0 6px rgba(57,255,139,.4)}
+.legend i.lg.failed{background:rgba(255,45,149,.2);border-color:var(--pink);box-shadow:0 0 6px rgba(255,45,149,.4)}
+.legend i.lg.now{border-color:var(--cyan);box-shadow:0 0 6px rgba(56,245,230,.5)}
+.legend i.lg.none{border-color:rgba(57,255,139,.2)}

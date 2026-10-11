@@ -3,10 +3,9 @@ import { computeSlots, dayKey, minuteOfDay, publishDraft, checkSold } from "./gc
 
 export const DEFAULT_SETTINGS = {
   paused: true,
-  dailyLimit: 15,
-  graceMin: 20,
+  dailyLimit: 15, // 固定(画面からは変更不可)
+  graceMin: 100000, // 事実上無制限(予定を過ぎても出品する)
   minIntervalMin: 30, // ゲームクラブの「30分に1回」制限
-  limitHours: 24,
   schedule: { mode: "interval", start: "00:00", end: "24:00", count: 15, manual: [] },
   discordWebhook: "",
   autoSold: { enabled: false, keywords: ["SOLD OUT", "売り切れ", "取引中"] },
@@ -113,7 +112,7 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
     return { ok: false, kind: "interval", message: `前回の出品から${settings.minIntervalMin ?? 30}分たっていません(あと約${wait}分)。`, label: draft.label };
   }
 
-  const result = await publishDraft(draft, secret.phpsessid, { limitHours: settings.limitHours, now });
+  const result = await publishDraft(draft, secret.phpsessid, { now });
   if (!result.ok && SAFE_TO_RELEASE.includes(result.kind)) await store.release(lock.prev);
 
   // 送信中に他の操作で変わっている可能性があるので、最新を読み直してから反映する
@@ -126,7 +125,6 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
     if (d) {
       d.publishedCount = (d.publishedCount || 0) + 1;
       d.lastPublishedAt = now;
-      if (!d.repeat) d.enabled = false;
     }
     if (!draftKey) {
       const i = drafts.findIndex((x) => x.key === draft.key);
