@@ -684,8 +684,12 @@ function renderAnalysis() {
         <dt>売れた数</dt><dd>\${a.totalSold} 件</dd>
         <dt>全体の売却率</dt><dd>\${(a.globalRate * 100).toFixed(1)} %</dd>
         <dt>正確な販売時刻</dt><dd>\${a.exactCount} 件</dd>
+        <dt>結果待ち(出品48時間以内)</dt><dd>\${a.pending} 件</dd>
+        <dt>過去データの取り込み</dt><dd>\${a.backfill ? (a.backfill.done ? "完了" : \`残り\${a.backfill.left}ページ\`) : "未開始"}</dd>
+        <dt>販売時刻の取得待ち</dt><dd>\${a.chatLeft} 件</dd>
         <dt>最終スキャン</dt><dd>\${lastScan}</dd>
       </dl>
+      <div class="muted" style="margin-top:8px">売却率は「売れた」か「出品から48時間以上たった」出品だけで計算しています(出品直後で結果待ちのものは含めません)。</div>
       <div class="banner \${conf.level === "high" ? "info" : "warn"}" style="margin-top:12px;margin-bottom:0">
         <div><b>データの信頼度: \${conf.label}</b><br>\${esc(conf.note)}</div>
       </div>
@@ -698,7 +702,13 @@ function renderAnalysis() {
     </div>
 
     <div class="card">
-      <h2>売れやすい時間帯 上位</h2>
+      <h2>購入が多い時間帯</h2>
+      <div class="muted" style="margin-bottom:8px">実際に購入された時刻の分布です。濃いマスほど、その曜日・時間に買われています。</div>
+      \${buildBuyHeat(a)}
+    </div>
+
+    <div class="card">
+      <h2>売れやすい時間帯 上位 <span class="q">出品した時刻ごと</span></h2>
       \${hourRank.length ? hourRank.map((x) => \`<div class="log"><span class="t">\${pad(x.h)}:00</span><span class="m">売れやすさ \${(x.rate * 100).toFixed(0)}% ・ 出品\${x.listed}件/売れた\${x.sold}件\${x.medHours ? \` ・ 中央\${x.medHours.toFixed(1)}時間で成約\` : ""}\${x.avgViews ? \` ・ 平均閲覧\${x.avgViews.toFixed(0)}\` : ""}</span></div>\`).join("") : "<div class='center'>データがたまると表示されます</div>"}
     </div>
 
@@ -717,7 +727,7 @@ function renderAnalysis() {
 
     <div class="card">
       <h2>今すぐデータ更新</h2>
-      <div class="muted" style="margin-bottom:10px">通常は10分おきに自動で集計されます。すぐ最新にしたいときに押してください(少し時間がかかります)。</div>
+      <div class="muted" style="margin-bottom:10px">通常は10分おきに自動で集計されます。過去データの取り込みは少しずつ進むので、早く終わらせたいときはこのボタンを何回か押してください。</div>
       <button class="btn" id="an_scan">今すぐスキャン</button>
       <div class="muted" id="an_scanMsg" style="margin-top:8px"></div>
     </div>\`;
@@ -726,8 +736,8 @@ function renderAnalysis() {
     try { const r = await api("/analytics/apply", { method: "POST", body: "{}" }); toast(\`\${r.times.length}枠を反映しました\`); refresh(); } catch (e) { toast(e.message, true); }
   };
   $("#an_scan").onclick = async (e) => {
-    e.target.disabled = true; $("#an_scanMsg").textContent = "スキャン中…(最大1分)";
-    try { const r = await api("/scan", { method: "POST", body: "{}" }); $("#an_scanMsg").textContent = r.skipped ? \`スキップ: \${r.skipped}\` : \`完了(出品中\${r.onsale}・取引中\${r.trading}・新たに売れた\${r.newlySold})\`; await loadAnalytics(); render(); }
+    e.target.disabled = true; $("#an_scanMsg").textContent = "スキャン中…(30秒ほどかかります)";
+    try { const r = await api("/scan", { method: "POST", body: "{}" }); $("#an_scanMsg").textContent = r.skipped ? \`スキップ: \${r.skipped === "session" ? "ログイン状態が切れています" : r.skipped}\` : \`完了(新たに売れた\${r.newlySold}件・過去データ残り\${r.backfillLeft}ページ・販売時刻の取得待ち\${r.chatLeft}件)\`; await loadAnalytics(); render(); }
     catch (err) { $("#an_scanMsg").textContent = err.message; }
     e.target.disabled = false;
   };
@@ -749,6 +759,25 @@ function buildHeatV2(a) {
       const bg = has ? \`rgba(255,45,149,\${alpha})\` : "transparent";
       const title = has ? \`\${wd[w]} \${h}時: 出品\${c.listed} 売れた\${c.sold} (\${(c.rate * 100).toFixed(0)}%)\` : \`\${wd[w]} \${h}時: データなし\`;
       html += \`<td class="c" style="background:\${bg}" title="\${title}"></td>\`;
+    }
+    html += "</tr>";
+  }
+  return html + "</table></div>";
+}
+function buildBuyHeat(a) {
+  const wd = ["日", "月", "火", "水", "木", "金", "土"];
+  const vals = Object.values(a.buy || {});
+  if (!vals.length) return "<div class='center'>販売時刻が分かった取引がまだありません</div>";
+  const max = Math.max(...vals);
+  let html = '<div class="heat"><table><tr><th></th>';
+  for (let h = 0; h < 24; h += 2) html += \`<th colspan="2">\${h}</th>\`;
+  html += "</tr>";
+  for (let w = 0; w < 7; w++) {
+    html += \`<tr><th>\${wd[w]}</th>\`;
+    for (let h = 0; h < 24; h++) {
+      const n = a.buy[w + "-" + h] || 0;
+      const bg = n ? \`rgba(57,255,139,\${0.15 + 0.85 * (n / max)})\` : "transparent";
+      html += \`<td class="c" style="background:\${bg}" title="\${wd[w]} \${h}時: 購入\${n}件"></td>\`;
     }
     html += "</tr>";
   }

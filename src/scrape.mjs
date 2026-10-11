@@ -37,7 +37,8 @@ export function parseListHtml(htmlText) {
 
 // ページ番号の最大値(ページ送り)
 export function parseMaxPage(htmlText) {
-  const nums = [...htmlText.matchAll(/[?&]page=(\d+)/g)].map((m) => Number(m[1]));
+  // リンクは "?page=32" と "&amp;page=21" の両方の書き方がある
+  const nums = [...htmlText.matchAll(/(?:\?|&|&amp;)page=(\d+)/g)].map((m) => Number(m[1]));
   return nums.length ? Math.max(...nums) : 1;
 }
 
@@ -73,6 +74,17 @@ export async function fetchList(session, status, { maxPages = 40 } = {}) {
     items = items.concat(parseListHtml(await res.text()));
   }
   return { ok: true, items, pages };
+}
+
+// 1ページだけ読む。maxPage(全ページ数)も返す。
+export async function fetchPage(session, status, page = 1) {
+  const base = status === "onsale" ? "/mypage/products" : `/mypage/products?status=${status}`;
+  const url = page > 1 ? `${base}${base.includes("?") ? "&" : "?"}page=${page}` : base;
+  const res = await gcFetch(url, session);
+  if (res.status !== 200) return { ok: false, status: res.status, items: [], maxPage: 0 };
+  const h = await res.text();
+  if (!/rows-list|item-row/.test(h)) return { ok: false, status: "session", items: [], maxPage: 0 };
+  return { ok: true, items: parseListHtml(h), maxPage: parseMaxPage(h) };
 }
 
 export async function fetchChatSoldAt(session, chatId) {
