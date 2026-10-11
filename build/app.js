@@ -7,9 +7,14 @@ const KEY = "gc_admin_key";
 let state = null, logs = null, tab = "home", pw = sessionStorage.getItem(KEY) || "";
 
 function hm2str(m) { return `${Math.floor(m / 60)}:${pad(m % 60)}`; }
-function fmtTime(ms) { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
-function fmtDate(ms) { const d = new Date(ms), n = new Date(); const t = `${pad(d.getHours())}:${pad(d.getMinutes())}`; if (d.toDateString() === n.toDateString()) return `今日 ${t}`; return `${d.getMonth() + 1}/${d.getDate()} ${t}`; }
-function ago(ms) { const s = (Date.now() - ms) / 1000; if (s < 90) return "さっき"; if (s < 3600) return `${Math.floor(s / 60)}分前`; if (s < 86400) return `${Math.floor(s / 3600)}時間前`; return `${Math.floor(s / 86400)}日前`; }
+// ===== 時刻はすべて「サーバー(インターネット)の時計」×「日本時間」で扱う =====
+// 端末の時計がずれていても影響しないよう、サーバーの現在時刻との差を記録して補正します。
+let clockOffset = 0;
+const nowMs = () => Date.now() + clockOffset;
+const J = (ms) => { const d = new Date(ms + 9 * 3600e3); return { y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds(), wd: d.getUTCDay() }; };
+function fmtTime(ms) { const d = J(ms); return `${pad(d.h)}:${pad(d.mi)}`; }
+function fmtDate(ms) { const d = J(ms), n = J(nowMs()); const t = `${pad(d.h)}:${pad(d.mi)}`; if (d.y === n.y && d.mo === n.mo && d.d === n.d) return `今日 ${t}`; return `${d.mo}/${d.d} ${t}`; }
+function ago(ms) { const s = (nowMs() - ms) / 1000; if (s < 90) return "さっき"; if (s < 3600) return `${Math.floor(s / 60)}分前`; if (s < 86400) return `${Math.floor(s / 3600)}時間前`; return `${Math.floor(s / 86400)}日前`; }
 
 let toastT;
 function toast(msg, bad) {
@@ -65,7 +70,9 @@ function switchTab(t) {
 
 async function refresh(quiet) {
   try {
+    const t0 = Date.now();
     state = await api("/state");
+    clockOffset = state.now - Math.round((t0 + Date.now()) / 2); // 通信にかかった時間の半分を補正
     if (tab === "analysis" || tab === "home") { if (!logs || !quiet) logs = (await api("/logs")).logs; }
     render();
   } catch (e) { if (!quiet) toast(e.message, true); }
@@ -75,9 +82,10 @@ async function loadLogs() { logs = (await api("/logs")).logs; }
 function render() {
   if (!state) return;
   const s = state.settings;
-  $("#statusLine").innerHTML = s.paused
+  $("#statusLine").innerHTML = (s.paused
     ? `<span class="dot pause"></span>停止中`
-    : `<span class="dot run"></span>稼働中 ・ 今日 ${state.today.count}/${s.dailyLimit} 回`;
+    : `<span class="dot run"></span>稼働中 ・ 今日 ${state.today.count}/${s.dailyLimit} 回`) + ` ・ <span id="clock" title="インターネット(サーバー)の時刻・日本時間"></span>`;
+  tickClock();
   renderBanners();
   if (tab === "home") renderHome();
   if (tab === "drafts") renderDrafts();
@@ -85,6 +93,13 @@ function render() {
   if (tab === "analysis") renderAnalysis();
   if (tab === "settings") renderSettings();
 }
+
+function tickClock() {
+  const el = document.getElementById("clock"); if (!el) return;
+  const d = J(nowMs());
+  el.textContent = `${d.mo}/${d.d} ${pad(d.h)}:${pad(d.mi)}:${pad(d.s)} JST`;
+}
+setInterval(tickClock, 1000);
 
 function renderBanners() {
   const b = $("#banners"); b.innerHTML = "";
@@ -97,7 +112,7 @@ function renderBanners() {
     b.innerHTML += `<div class="banner info">はじめに「設定」タブで、ゲームクラブのログイン情報(PHPSESSID)を登録してください。</div>`;
   }
   const t = state.lastTick;
-  if (t && Date.now() - t > 20 * 60000 && !state.settings.paused) {
+  if (t && nowMs() - t > 20 * 60000 && !state.settings.paused) {
     b.innerHTML += `<div class="banner warn">自動実行が${ago(t)}から動いていないようです。Netlifyの Functions → tick のログを確認してください。</div>`;
   }
 }
@@ -106,7 +121,7 @@ window.clearAlert = async () => { await api("/alert/clear", { method: "POST" });
 // ---- ホーム ----
 function renderHome() {
   const s = state.settings, now = state.now;
-  const curMin = new Date(now).getHours() * 60 + new Date(now).getMinutes();
+  const curMin = J(nowMs()).h * 60 + J(nowMs()).mi;
   const slotHtml = state.slots.map((m) => {
     const st = state.today.slots[m];
     const cls = st?.status === "done" ? "done" : st?.status === "failed" ? "failed" : st?.status === "skipped" ? "skipped" : "";
@@ -337,8 +352,8 @@ function renderAnalysis() {
   const sold = logs.filter((l) => l.ok && l.sold && l.soldAt);
   const listed = logs.filter((l) => l.ok);
   const byHour = Array.from({ length: 24 }, () => ({ listed: 0, sold: 0, totalMs: 0 }));
-  listed.forEach((l) => byHour[new Date(l.at).getHours()].listed++);
-  sold.forEach((l) => { const h = new Date(l.at).getHours(); byHour[h].sold++; byHour[h].totalMs += l.soldAt - l.at; });
+  listed.forEach((l) => byHour[J(l.at).h].listed++);
+  sold.forEach((l) => { const h = J(l.at).h; byHour[h].sold++; byHour[h].totalMs += l.soldAt - l.at; });
   const maxRate = Math.max(0.0001, ...byHour.map((b) => (b.listed ? b.sold / b.listed : 0)));
   const heat = buildHeat();
   const best = bestHours(5);
@@ -368,7 +383,7 @@ function renderAnalysis() {
     </div>`;
   $$("#logList [data-sold]").forEach((b) => b.onclick = async () => {
     const id = b.dataset.sold, l = logs.find((x) => x.id === id);
-    try { await api("/logs/" + id, { method: "PATCH", body: JSON.stringify({ sold: !l.sold }) }); l.sold = !l.sold; l.soldAt = l.sold ? Date.now() : null; render(); } catch (e) { toast(e.message, true); }
+    try { await api("/logs/" + id, { method: "PATCH", body: JSON.stringify({ sold: !l.sold }) }); l.sold = !l.sold; l.soldAt = l.sold ? nowMs() : null; render(); } catch (e) { toast(e.message, true); }
   });
 }
 function fullLogRow(l) {
@@ -377,7 +392,7 @@ function fullLogRow(l) {
 function buildHeat() {
   const wd = ["日", "月", "火", "水", "木", "金", "土"];
   const cell = {}; // wd-hourbucket -> {listed, totalMs, sold}
-  logs.filter((l) => l.ok).forEach((l) => { const d = new Date(l.at), k = d.getDay() + "-" + d.getHours(); (cell[k] ||= { listed: 0, sold: 0, totalMs: 0 }).listed++; if (l.sold && l.soldAt) { cell[k].sold++; cell[k].totalMs += l.soldAt - l.at; } });
+  logs.filter((l) => l.ok).forEach((l) => { const d = J(l.at), k = d.wd + "-" + d.h; (cell[k] ||= { listed: 0, sold: 0, totalMs: 0 }).listed++; if (l.sold && l.soldAt) { cell[k].sold++; cell[k].totalMs += l.soldAt - l.at; } });
   let max = 0.0001;
   Object.values(cell).forEach((c) => { if (c.listed) max = Math.max(max, c.sold / c.listed); });
   let html = '<div class="heat"><table><tr><th></th>';
@@ -400,7 +415,7 @@ function buildHeat() {
 function bestHours(n) {
   if (!logs) return [];
   const byHour = Array.from({ length: 24 }, () => ({ listed: 0, sold: 0, totalMs: 0 }));
-  logs.filter((l) => l.ok).forEach((l) => { const h = new Date(l.at).getHours(); byHour[h].listed++; if (l.sold && l.soldAt) { byHour[h].sold++; byHour[h].totalMs += l.soldAt - l.at; } });
+  logs.filter((l) => l.ok).forEach((l) => { const h = J(l.at).h; byHour[h].listed++; if (l.sold && l.soldAt) { byHour[h].sold++; byHour[h].totalMs += l.soldAt - l.at; } });
   const scored = byHour.map((b, h) => ({ h, score: b.sold ? (b.sold / b.listed) * 1000 - (b.totalMs / b.sold) / 60000 : -1, sold: b.sold }));
   return scored.filter((x) => x.sold > 0).sort((a, b) => b.score - a.score).slice(0, n).map((x) => x.h);
 }

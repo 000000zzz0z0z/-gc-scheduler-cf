@@ -2,7 +2,8 @@
 // - fetch: 管理画面の表示と API
 // - scheduled: 1分おきの自動出品(wrangler.toml の triggers.crons)
 import { PAGE } from "./page.mjs";
-import { load, save, publishNext, nextDraftIndex, tick, DEFAULT_SETTINGS } from "./core.mjs";
+import { load, save, loadLogs, db, publishNext, nextDraftIndex, tick } from "./core.mjs";
+export { GcStore } from "./store.mjs";
 import { computeSlots, dayKey, parseMultipart, testConnection, isHM } from "./gc.mjs";
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
@@ -62,7 +63,7 @@ const draftSummary = (d) => {
 async function handleApi(request, env, path) {
   if (!env.ADMIN_PASSWORD) return json({ error: "ADMIN_PASSWORD が未設定です。CloudflareのSettings → Variables and Secrets で設定してください。" }, 500);
   if (!authorized(request, env)) return json({ error: "パスワードが違います。" }, 401);
-  if (!env.GC_KV) return json({ error: "保存領域(KV)が未接続です。READMEの手順を確認してください。" }, 500);
+  if (!env.GC_STORE) return json({ error: "保存領域(Durable Object)が未接続です。wrangler.toml を最新版にしてください。" }, 500);
 
   const method = request.method;
   const body = ["POST", "PATCH", "PUT"].includes(method) ? await request.json().catch(() => ({})) : {};
@@ -71,12 +72,12 @@ async function handleApi(request, env, path) {
 
   try {
     if (method === "GET" && sub[0] === "state" && sub.length === 1) {
-      const [settings, secret, drafts, state] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "drafts"), load(env, "state")]);
+      const [settings, secret, drafts, state, lastTick] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "drafts"), load(env, "state"), db(env).get("lastTick")]);
       const now = Date.now();
       const idx = nextDraftIndex(drafts, state.pointer);
-      return json({ now, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick: state.lastTick });
+      return json({ now, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick });
     }
-    if (method === "GET" && sub[0] === "logs" && sub.length === 1) return json({ logs: await load(env, "logs") });
+    if (method === "GET" && sub[0] === "logs" && sub.length === 1) return json({ logs: await loadLogs(env, 3000) });
 
     if (method === "POST" && sub[0] === "settings") { const s = mergeSettings(await load(env, "settings"), body); await save(env, "settings", s); return json({ ok: true, settings: s }); }
 
@@ -149,11 +150,9 @@ async function handleApi(request, env, path) {
     }
 
     if (sub[0] === "logs" && sub[1] && method === "PATCH") {
-      const logs = await load(env, "logs");
-      const l = logs.find((x) => x.id === sub[1]);
+      const sold = !!body.sold;
+      const l = await db(env).patchLog(sub[1], { sold, soldAt: sold ? Number(body.soldAt) || Date.now() : null, soldBy: sold ? "manual" : null });
       if (!l) throw new Error("記録が見つかりません。");
-      l.sold = !!body.sold; l.soldAt = l.sold ? Number(body.soldAt) || Date.now() : null; l.soldBy = l.sold ? "manual" : null;
-      await save(env, "logs", logs);
       return json({ ok: true });
     }
 
@@ -167,7 +166,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/")) return handleApi(request, env, url.pathname);
-    if (url.pathname === "/health") return json({ ok: true, kvBound: !!env.GC_KV, passwordSet: !!env.ADMIN_PASSWORD });
+    if (url.pathname === "/health") return json({ ok: true, storeBound: !!env.GC_STORE, passwordSet: !!env.ADMIN_PASSWORD });
     return new Response(PAGE, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" } });
   },
   async scheduled(event, env, ctx) {

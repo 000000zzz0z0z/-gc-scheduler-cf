@@ -76,6 +76,9 @@ export function parseMultipart(raw) {
   }
   if (!fields.length) throw new Error("項目を1つも読み取れませんでした。貼り付けた内容を確認してください。");
   if (!fields.some((f) => f.name === "name")) throw new Error("商品名(name)の項目が見つかりません。出品(add?draft=…)の通信のPayloadか確認してください。");
+  const priceField = fields.find((f) => f.name === "price");
+  if (!priceField || !String(priceField.value).trim()) throw new Error("価格(price)が見つかりません。データが途中で切れている可能性があります。View sourceの一番下にある「Show more」を押して全文を表示してからコピーしてください(最後が ------WebKitFormBoundary…-- で終わる行ならOK)。");
+  if (!/--\s*$/.test(text.trim())) throw new Error("データが途中で切れているようです。View sourceの「Show more」を押して全文を表示してからコピーしてください(最後が ------WebKitFormBoundary…-- で終わる行ならOK)。");
   return fields;
 }
 
@@ -137,10 +140,12 @@ const plain = (html) =>
     .trim();
 
 function summarizeErrors(j) {
-  if (j.errors && typeof j.errors === "object") return Object.values(j.errors).flat().join(" / ");
-  if (j.message) return String(j.message);
-  if (j.error) return String(j.error);
-  return JSON.stringify(j).slice(0, 300);
+  const flat = (v) => (v == null ? [] : typeof v === "object" ? Object.values(v).flatMap(flat) : [String(v)]);
+  const parts = [];
+  if (j.errors) parts.push(...flat(j.errors));
+  for (const k of ["message", "error", "msg", "alert"]) if (j[k]) parts.push(...flat(j[k]));
+  const msg = parts.map((x) => x.trim()).filter(Boolean).join(" / ");
+  return msg || "応答: " + JSON.stringify(j).slice(0, 300);
 }
 
 export async function publishDraft(draft, session, { limitHours = 24, now = Date.now() } = {}) {
@@ -175,7 +180,8 @@ export async function publishDraft(draft, session, { limitHours = 24, now = Date
   if (json && typeof json.location === "string" && /login/i.test(json.location)) {
     return { ok: false, kind: "session", status: r.status, message: "ログイン状態が切れています。設定からPHPSESSIDを貼り直してください。" };
   }
-  const message = json ? summarizeErrors(json) : plain(r.text).slice(0, 300) || `想定外の応答です(ステータス${r.status})`;
+  const detail = json ? summarizeErrors(json) : plain(r.text).slice(0, 300);
+  const message = `${detail || "空の応答"}(ステータス${r.status})`;
   return { ok: false, kind: res.status === 422 ? "invalid" : "unknown", status: r.status, message };
 }
 
