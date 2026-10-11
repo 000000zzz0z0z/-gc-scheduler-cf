@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>出品スケジューラー</title>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<div id="login" class="login-wrap">
+  <div class="login-box boot">
+    <div class="login-title"><span class="g">出品</span><span class="p">スケジューラー</span></div>
+    <div class="login-sub">GAMECLUB AUTO LISTING SYSTEM</div>
+    <div class="card" style="text-align:left">
+      <div class="field">
+        <label>管理パスワード</label>
+        <input type="password" id="pw" placeholder="ADMIN_PASSWORD" autocomplete="current-password">
+      </div>
+      <button class="btn p" id="loginBtn" style="width:100%">接続する</button>
+      <div class="muted" style="margin-top:11px" id="loginMsg"></div>
+    </div>
+  </div>
+</div>
+
+<div id="app" class="wrap hide">
+  <div class="hd">
+    <div>
+      <h1><span class="g">出品</span><span class="p">スケジューラー</span></h1>
+      <div class="statusLine" id="statusLine">接続中…</div>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <button class="btn gho sm" id="soundToggle" title="サウンド切替">♪ ON</button>
+      <button class="btn gho sm" id="logout">切断</button>
+    </div>
+  </div>
+  <div id="banners"></div>
+  <div class="tabs">
+    <button data-tab="home" class="on">ホーム</button>
+    <button data-tab="drafts">下書き</button>
+    <button data-tab="schedule">時間</button>
+    <button data-tab="analysis">分析</button>
+    <button data-tab="settings">設定</button>
+  </div>
+  <div id="tab-home" class="tab"></div>
+  <div id="tab-drafts" class="tab hide"></div>
+  <div id="tab-schedule" class="tab hide"></div>
+  <div id="tab-analysis" class="tab hide"></div>
+  <div id="tab-settings" class="tab hide"></div>
+</div>
+<div class="toast" id="toast"></div>
+<script>/*__SOUND__*/</script>
+<script>/*__APP__*/</script>
+<script>
+// サウンドのON/OFFボタン
+(function(){
+  const b=document.getElementById("soundToggle");
+  if(!b)return;
+  let on=true;
+  b.onclick=()=>{ on=!on; window.Snd&&Snd.setEnabled(on); b.textContent= on?"♪ ON":"♪ OFF"; b.style.color= on?"":"var(--mut2)"; };
+})();
+</script>
+</body>
+</html>

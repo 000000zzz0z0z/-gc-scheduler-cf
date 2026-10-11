@@ -1,3 +1,12 @@
-name = "gc-scheduler-test"
+name = "gc-scheduler"
 main = "src/index.mjs"
 compatibility_date = "2025-01-01"
+
+# 1分おきに自動実行(予定時刻を過ぎた枠があれば出品)
+[triggers]
+crons = ["* * * * *"]
+
+# データ保存領域。id はCloudflareでKVを作ったあとに書き換えます。
+[[kv_namespaces]]
+binding = "GC_KV"
+id = "PLACEHOLDER_REPLACE_ME"
