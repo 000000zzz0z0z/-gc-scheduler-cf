@@ -275,3 +275,25 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
 .op-s.acc{color:var(--amber);border-color:rgba(255,210,60,.45)}
 .trbar{margin-top:10px;font-size:12px;color:var(--mut);padding:7px 10px;border:1px solid rgba(56,245,230,.35);border-radius:9px;background:rgba(56,245,230,.06);display:flex;align-items:center;gap:8px}
 .trbar b{color:var(--cyan)}
+
+/* ===== リアルタイム表示(流れるログ) ===== */
+.livest{display:inline-flex;align-items:center;gap:6px;margin-left:10px;font-size:10.5px;font-weight:800;letter-spacing:.12em;padding:2px 9px;border-radius:999px;border:1px solid var(--mut2);color:var(--mut);vertical-align:middle}
+.livest i{width:7px;height:7px;border-radius:50%;background:var(--mut2);display:inline-block}
+.livest.live{color:var(--green);border-color:rgba(57,255,139,.55);box-shadow:0 0 10px rgba(57,255,139,.25)}
+.livest.live i{background:var(--green);box-shadow:0 0 8px var(--green);animation:livepulse 1.2s ease-in-out infinite}
+.livest.connecting,.livest.retry{color:var(--amber);border-color:rgba(255,210,60,.45)}
+.livest.connecting i,.livest.retry i{background:var(--amber);animation:livepulse .6s ease-in-out infinite}
+.livest.poll{color:var(--cyan);border-color:rgba(56,245,230,.45)}
+.livest.poll i{background:var(--cyan)}
+@keyframes livepulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.55);opacity:.45}}
+
+/* 新しい行: 上からスッと滑り込んで、一瞬光ってから落ち着く */
+.op.enter{opacity:0;transform:translateY(-10px);max-height:0;margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0;overflow:hidden}
+.op.enter.in{opacity:1;transform:none;max-height:420px;margin:4px 0;padding:7px 9px;
+  transition:opacity .35s ease,transform .45s cubic-bezier(.2,.9,.25,1),max-height .45s cubic-bezier(.2,.9,.25,1),margin .3s,padding .3s;
+  animation:opglow 1.4s ease-out .1s}
+.op.enter.in.error{animation:opglowp 1.4s ease-out .1s}
+@keyframes opglow{0%{box-shadow:0 0 0 1px rgba(57,255,139,.9),0 0 18px rgba(57,255,139,.55);background:rgba(57,255,139,.16)}100%{box-shadow:none}}
+@keyframes opglowp{0%{box-shadow:0 0 0 1px rgba(255,45,149,.95),0 0 20px rgba(255,45,149,.6);background:rgba(255,45,149,.2)}100%{box-shadow:none}}
+.netbar b.tick{display:inline-block;transition:color .3s}
+@media (prefers-reduced-motion:reduce){.op.enter{opacity:1;transform:none;max-height:none;margin:4px 0;padding:7px 9px}}

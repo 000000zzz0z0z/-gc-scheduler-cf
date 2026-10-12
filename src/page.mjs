@@ -283,6 +283,28 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
 .op-s.acc{color:var(--amber);border-color:rgba(255,210,60,.45)}
 .trbar{margin-top:10px;font-size:12px;color:var(--mut);padding:7px 10px;border:1px solid rgba(56,245,230,.35);border-radius:9px;background:rgba(56,245,230,.06);display:flex;align-items:center;gap:8px}
 .trbar b{color:var(--cyan)}
+
+/* ===== リアルタイム表示(流れるログ) ===== */
+.livest{display:inline-flex;align-items:center;gap:6px;margin-left:10px;font-size:10.5px;font-weight:800;letter-spacing:.12em;padding:2px 9px;border-radius:999px;border:1px solid var(--mut2);color:var(--mut);vertical-align:middle}
+.livest i{width:7px;height:7px;border-radius:50%;background:var(--mut2);display:inline-block}
+.livest.live{color:var(--green);border-color:rgba(57,255,139,.55);box-shadow:0 0 10px rgba(57,255,139,.25)}
+.livest.live i{background:var(--green);box-shadow:0 0 8px var(--green);animation:livepulse 1.2s ease-in-out infinite}
+.livest.connecting,.livest.retry{color:var(--amber);border-color:rgba(255,210,60,.45)}
+.livest.connecting i,.livest.retry i{background:var(--amber);animation:livepulse .6s ease-in-out infinite}
+.livest.poll{color:var(--cyan);border-color:rgba(56,245,230,.45)}
+.livest.poll i{background:var(--cyan)}
+@keyframes livepulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.55);opacity:.45}}
+
+/* 新しい行: 上からスッと滑り込んで、一瞬光ってから落ち着く */
+.op.enter{opacity:0;transform:translateY(-10px);max-height:0;margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0;overflow:hidden}
+.op.enter.in{opacity:1;transform:none;max-height:420px;margin:4px 0;padding:7px 9px;
+  transition:opacity .35s ease,transform .45s cubic-bezier(.2,.9,.25,1),max-height .45s cubic-bezier(.2,.9,.25,1),margin .3s,padding .3s;
+  animation:opglow 1.4s ease-out .1s}
+.op.enter.in.error{animation:opglowp 1.4s ease-out .1s}
+@keyframes opglow{0%{box-shadow:0 0 0 1px rgba(57,255,139,.9),0 0 18px rgba(57,255,139,.55);background:rgba(57,255,139,.16)}100%{box-shadow:none}}
+@keyframes opglowp{0%{box-shadow:0 0 0 1px rgba(255,45,149,.95),0 0 20px rgba(255,45,149,.6);background:rgba(255,45,149,.2)}100%{box-shadow:none}}
+.netbar b.tick{display:inline-block;transition:color .3s}
+@media (prefers-reduced-motion:reduce){.op.enter{opacity:1;transform:none;max-height:none;margin:4px 0;padding:7px 9px}}
 </style>
 </head>
 <body>
@@ -886,32 +908,96 @@ function renderMarketView(a) {
 }
 
 // ---- ログ(リアルタイム) ----
+// ツールとの間に専用回線(WebSocket)を張り、ログが書かれた瞬間に受け取って、上から滑り込ませる。
+// 回線がつながらない環境では、5秒ごとに取りに行く方式に自動で切り替える。
 const LOG_CATS = ["すべて", "定期実行", "出品", "売れ行き", "市場調査", "最適化", "通信", "管理画面", "アクセス", "システム"];
-const LV_NAME = { debug: "詳細", info: "通常", warn: "警告", error: "エラー" };
-let opsBuf = [], opsNewest = "", opsTimer = null, opsCat = "すべて", opsLevel = "all", opsPaused = false, opsNet = null, opsOpen = new Set(), opsQ = "", opsTrace = "";
+let opsBuf = [], opsIds = new Set(), opsNewest = "", opsCat = "すべて", opsLevel = "all", opsPaused = false, opsNet = null, opsOpen = new Set(), opsQ = "", opsTrace = "";
+let ws = null, wsState = "off", wsRetry = 0, wsTimer = null, wsPing = null, pollTimer = null, held = [];
 
-async function pollOps(initial) {
-  try {
-    const r = await api(\`/ops?limit=\${initial ? 500 : 300}\${opsNewest && !initial ? "&after=" + encodeURIComponent(opsNewest) : ""}\`);
-    opsNet = r.net;
-    if (r.ops.length) {
-      const known = new Set(opsBuf.map((x) => x.id));
-      const fresh = r.ops.filter((x) => !known.has(x.id));
-      opsBuf = fresh.concat(opsBuf).sort((x, y) => (x.id < y.id ? 1 : -1)).slice(0, 4000);
-      opsNewest = opsBuf[0].id;
-      if (!initial && fresh.length && tab === "logs") flashNew(fresh.length);
-    }
-    if (tab === "logs") drawOps();
-  } catch (e) { /* 一時的な失敗は無視 */ }
+function setLiveState(st) {
+  wsState = st;
+  const el = $("#ops_live_st"); if (!el) return;
+  const m = { live: ["LIVE", "リアルタイムで受信中"], connecting: ["接続中", "回線をつないでいます…"], retry: ["再接続中", "回線が切れたので、つなぎ直しています…"], poll: ["5秒ごと", "回線がつながらないため、5秒ごとに取りに行っています"], off: ["停止", ""] }[st] || ["", ""];
+  el.className = "livest " + st; el.innerHTML = \`<i></i>\${m[0]}\`; el.title = m[1];
 }
-function flashNew(n) { const el = $("#ops_new"); if (el) { el.textContent = \`+\${n}件\`; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 1500); } }
-function startOps() { if (opsTimer) return; pollOps(!opsBuf.length); opsTimer = setInterval(() => { if (!opsPaused && !document.hidden) pollOps(false); }, 5000); }
-function stopOps() { clearInterval(opsTimer); opsTimer = null; }
+
+function ingest(list, { animate = true } = {}) {
+  const fresh = list.filter((o) => o && o.id && !opsIds.has(o.id));
+  if (!fresh.length) return;
+  fresh.forEach((o) => { opsIds.add(o.id); const nc = o.d && o.d.todayCount; if (nc && opsNet && nc > opsNet.today) { opsNet.today = nc; drawNet(); } });
+  const topBefore = opsBuf.length ? opsBuf[0].id : "";
+  opsBuf = fresh.concat(opsBuf).sort((x, y) => (x.id < y.id ? 1 : -1));
+  if (opsBuf.length > 6000) { opsBuf.slice(6000).forEach((o) => opsIds.delete(o.id)); opsBuf.length = 6000; }
+  opsNewest = opsBuf[0].id;
+  if (tab !== "logs" || !$("#ops_list")) return;
+  const allNewer = fresh.every((o) => o.id > topBefore);
+  const show = fresh.filter(passOps).sort((x, y) => (x.id < y.id ? 1 : -1));
+  if (!show.length) { drawCount(); return; }
+  if (opsPaused) { held.push(...show); drawHeld(); drawCount(); return; }
+  if (allNewer && animate) insertTop(show); else drawOps();
+}
+
+function insertTop(list) {
+  const box = $("#ops_list"); if (!box) return;
+  const empty = box.querySelector(".center"); if (empty) empty.remove();
+  const frag = document.createElement("div");
+  frag.innerHTML = list.map((o) => opHtml(o, true)).join("");
+  const nodes = [...frag.children];
+  for (let i = nodes.length - 1; i >= 0; i--) box.insertBefore(nodes[i], box.firstChild);
+  // 少し遅らせて光らせ、落ち着かせる
+  requestAnimationFrame(() => nodes.forEach((n, i) => setTimeout(() => n.classList.add("in"), i * 45)));
+  setTimeout(() => nodes.forEach((n) => n.classList.remove("enter", "in")), 1600 + nodes.length * 45);
+  // 表示しきれない古い行を下から消す
+  const rows = box.querySelectorAll(".op");
+  for (let i = 700; i < rows.length; i++) rows[i].remove();
+  drawCount();
+  if (window.Snd && list.some((o) => o.lvl === "error")) Snd.fail();
+}
+
+function connectWS() {
+  if (!("WebSocket" in window)) return startPolling();
+  clearTimeout(wsTimer);
+  setLiveState(wsRetry ? "retry" : "connecting");
+  try { ws = new WebSocket(\`\${location.protocol === "https:" ? "wss" : "ws"}://\${location.host}/api/stream?k=\${encodeURIComponent(pw)}\`); }
+  catch { return startPolling(); }
+  ws.onopen = () => {
+    wsRetry = 0; setLiveState("live"); stopPolling();
+    clearInterval(wsPing); wsPing = setInterval(() => { try { ws.readyState === 1 && ws.send("ping"); } catch {} }, 30000);
+    catchUp(); // 回線が切れていた間のログを取り戻す
+  };
+  ws.onmessage = (ev) => {
+    if (ev.data === "pong") return;
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.t === "ops") ingest(m.ops);
+    else if (m.t === "net") { opsNet = m.net; drawNet(); }
+  };
+  ws.onclose = () => {
+    clearInterval(wsPing);
+    if (tab !== "logs") { setLiveState("off"); return; }
+    wsRetry++;
+    if (wsRetry >= 3) startPolling(); // つながらない間は5秒ごとの方式で補う
+    setLiveState(wsRetry >= 3 ? "poll" : "retry");
+    wsTimer = setTimeout(connectWS, Math.min(30000, 1000 * 2 ** Math.min(wsRetry, 5)));
+  };
+  ws.onerror = () => { try { ws.close(); } catch {} };
+}
+async function catchUp() {
+  try {
+    const r = await api(\`/ops?limit=500\${opsNewest ? "&after=" + encodeURIComponent(opsNewest) : ""}\`);
+    if (r.net) { opsNet = r.net; drawNet(); }
+    ingest(r.ops, { animate: !!opsNewest });
+    if (!opsNewest) drawOps();
+  } catch {}
+}
+function startPolling() { if (pollTimer) return; pollTimer = setInterval(() => { if (!document.hidden) catchUp(); }, 5000); }
+function stopPolling() { clearInterval(pollTimer); pollTimer = null; }
+function startOps() { if (!opsBuf.length) catchUp(); if (!ws || ws.readyState > 1) connectWS(); }
+function stopOps() { clearTimeout(wsTimer); clearInterval(wsPing); stopPolling(); if (ws) { ws.onclose = null; try { ws.close(); } catch {} ws = null; } wsRetry = 0; setLiveState("off"); }
 
 function renderLogs() {
   $("#tab-logs").innerHTML = \`
     <div class="card">
-      <h2>動作ログ <span class="q">ツールのすべての動きを記録しています(7日間保存)</span><span id="ops_new" class="newbadge"></span></h2>
+      <h2>動作ログ <span class="q">ツールのすべての動きを記録しています(7日間保存)</span><span id="ops_live_st" class="livest"></span></h2>
       <div id="ops_net" class="netbar"></div>
       <div class="chips" id="ops_cats">\${LOG_CATS.map((c) => \`<button data-c="\${c}" class="\${c === opsCat ? "on" : ""}">\${c}</button>\`).join("")}</div>
       <div class="row" style="margin-top:10px;align-items:center;gap:8px">
@@ -924,17 +1010,20 @@ function renderLogs() {
         <input type="text" id="ops_q" placeholder="文字で検索(例: 15344261 / 429 / 取引中)" value="\${esc(opsQ)}" style="flex:2 1 220px">
       </div>
       <div class="row" style="margin-top:10px;align-items:center;gap:8px">
-        <label class="switch" style="flex:0 0 auto"><input type="checkbox" id="ops_live" \${opsPaused ? "" : "checked"}><span class="track"></span><span>自動更新(5秒ごと)</span></label>
+        <label class="switch" style="flex:0 0 auto"><input type="checkbox" id="ops_live" \${opsPaused ? "" : "checked"}><span class="track"></span><span>流れる表示</span></label>
         <button class="btn sm" id="ops_more">さらに古いログを読む</button>
         <button class="btn sm" id="ops_dl">表示中のログを保存</button>
       </div>
+      <button class="btn sm p hide" id="ops_held" style="margin-top:10px;width:100%"></button>
       <div id="ops_tr" class="trbar \${opsTrace ? "" : "hide"}"></div>
     </div>
     <div class="card" style="padding:8px 10px"><div class="muted" id="ops_count" style="margin:2px 4px 6px"></div><div id="ops_list"><div class="center">読み込み中…</div></div></div>\`;
+  setLiveState(ws && ws.readyState === 1 ? "live" : pollTimer ? "poll" : "connecting");
   $$("#ops_cats button").forEach((b) => (b.onclick = () => { opsCat = b.dataset.c; $$("#ops_cats button").forEach((x) => x.classList.toggle("on", x === b)); drawOps(); }));
   $("#ops_lvl").onchange = (e) => { opsLevel = e.target.value; drawOps(); };
   let qt; $("#ops_q").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { opsQ = e.target.value.trim(); drawOps(); }, 250); };
-  $("#ops_live").onchange = (e) => { opsPaused = !e.target.checked; if (!opsPaused) pollOps(false); };
+  $("#ops_live").onchange = (e) => { opsPaused = !e.target.checked; if (!opsPaused && held.length) { held = []; drawHeld(); drawOps(); } };
+  $("#ops_held").onclick = () => { held = []; drawHeld(); drawOps(); };
   $("#ops_dl").onclick = () => {
     const rows = filteredOps();
     const blob = new Blob([JSON.stringify(rows, null, 1)], { type: "application/json" });
@@ -947,52 +1036,62 @@ function renderLogs() {
     try {
       const oldest = opsBuf.length ? opsBuf[opsBuf.length - 1].id : "";
       const r = await api(\`/ops?limit=500&before=\${encodeURIComponent(oldest)}\`);
-      const known = new Set(opsBuf.map((x) => x.id));
-      const add = r.ops.filter((x) => !known.has(x.id));
-      opsBuf = opsBuf.concat(add).sort((x, y) => (x.id < y.id ? 1 : -1)).slice(0, 8000);
+      const add = r.ops.filter((x) => !opsIds.has(x.id));
+      add.forEach((o) => opsIds.add(o.id));
+      opsBuf = opsBuf.concat(add).sort((x, y) => (x.id < y.id ? 1 : -1));
       toast(add.length ? \`\${add.length}件読み込みました\` : "これより古いログはありません"); drawOps();
     } catch (err) { toast(err.message, true); }
     e.target.disabled = false;
   };
+  // クリックはまとめて受け取る(後から差し込んだ行にも効くように)
+  $("#ops_list").onclick = (ev) => {
+    const tk = ev.target.closest("[data-tk]");
+    if (tk) { opsTrace = tk.dataset.tk; drawOps(); return; }
+    const el = ev.target.closest(".op"); if (!el) return;
+    const id = el.dataset.id; opsOpen.has(id) ? opsOpen.delete(id) : opsOpen.add(id);
+    const o = opsBuf.find((x) => x.id === id); if (o) { const tmp = document.createElement("div"); tmp.innerHTML = opHtml(o, false); el.replaceWith(tmp.firstElementChild); }
+  };
+  drawNet();
   drawOps();
   startOps();
 }
 
-function filteredOps() {
+function passOps(o) {
   const rank = { debug: 0, info: 1, warn: 2, error: 3 };
   const min = { all: 0, info: 1, warn: 2, error: 3 }[opsLevel];
   const q = opsQ.toLowerCase();
-  return opsBuf.filter((o) => (opsCat === "すべて" || o.cat === opsCat) && rank[o.lvl] >= min && (!opsTrace || o.tk === opsTrace)
-    && (!q || (o.msg + " " + (o.d ? JSON.stringify(o.d) : "")).toLowerCase().includes(q)));
+  return (opsCat === "すべて" || o.cat === opsCat) && rank[o.lvl] >= min && (!opsTrace || o.tk === opsTrace)
+    && (!q || (o.msg + " " + (o.d ? JSON.stringify(o.d) : "")).toLowerCase().includes(q));
+}
+function filteredOps() { return opsBuf.filter(passOps); }
+
+function drawNet() {
+  const el = $("#ops_net"); if (!el || !opsNet) return;
+  const pause = opsNet.pauseUntil ? \`<span class="bad">休止中(\${fmtTime(opsNet.pauseUntil)}まで)</span>\` : \`<span class="okc">通常稼働</span>\`;
+  el.innerHTML = \`ゲームクラブへの通信: 今日 <b class="tick">\${opsNet.today}</b> / \${opsNet.cap} 回 ・ \${pause}\`;
+}
+function drawCount() { const c = $("#ops_count"); if (c) { const n = filteredOps().length; c.textContent = n ? \`\${n}件(読み込み済み \${opsBuf.length}件)\` : ""; } }
+function drawHeld() { const b = $("#ops_held"); if (!b) return; b.classList.toggle("hide", !held.length); b.textContent = \`新着 \${held.length}件 ― 押して表示\`; }
+
+function opHtml(o, enter) {
+  const d = J(o.t), time = \`\${d.mo}/\${d.d} \${pad(d.h)}:\${pad(d.mi)}:\${pad(d.s)}\`;
+  const det = o.d ? Object.entries(o.d).map(([k, v]) => \`<span class="kv"><i>\${esc(OPS_KEY[k] || k)}</i>\${esc(typeof v === "object" ? JSON.stringify(v) : String(v))}</span>\`).join("") : "";
+  const open = opsOpen.has(o.id);
+  const src = o.src === "manual" ? '<span class="op-s">手動</span>' : o.src === "access" ? '<span class="op-s acc">アクセス</span>' : "";
+  return \`<div class="op \${o.lvl}\${enter ? " enter" : ""}" data-id="\${o.id}">
+    <div class="op-h"><span class="op-t">\${time}</span><span class="op-c">\${esc(o.cat)}</span>\${o.lvl === "debug" ? '<span class="op-l">詳細</span>' : ""}\${src}\${o.tk ? \`<span class="op-k" data-tk="\${esc(o.tk)}" title="この処理のログだけ見る">#\${esc(o.tk)}</span>\` : ""}<span class="op-m">\${esc(o.msg)}</span>\${det ? \`<span class="op-x">\${open ? "▲" : "▼"}</span>\` : ""}</div>
+    \${det && open ? \`<div class="op-d">\${det}</div>\` : ""}
+  </div>\`;
 }
 
 function drawOps() {
   const list = $("#ops_list"); if (!list) return;
-  if (opsNet) {
-    const pause = opsNet.pauseUntil ? \`<span class="bad">休止中(\${fmtTime(opsNet.pauseUntil)}まで)</span>\` : \`<span class="okc">通常稼働</span>\`;
-    $("#ops_net").innerHTML = \`ゲームクラブへの通信: 今日 <b>\${opsNet.today}</b> / \${opsNet.cap} 回 ・ \${pause} ・ 読み込み済みログ \${opsBuf.length}件\`;
-  }
   const trb = $("#ops_tr");
   if (trb) { trb.classList.toggle("hide", !opsTrace); trb.innerHTML = opsTrace ? \`処理番号 <b>#\${esc(opsTrace)}</b> のログだけを表示中 <button class="btn sm gho" id="ops_trc">解除</button>\` : ""; const c = $("#ops_trc"); if (c) c.onclick = () => { opsTrace = ""; drawOps(); }; }
-  const all = filteredOps();
-  const rows = all.slice(0, 600);
-  $("#ops_count").textContent = all.length ? \`\${all.length}件\${all.length > 600 ? "(新しい600件を表示)" : ""}\` : "";
+  const rows = filteredOps().slice(0, 700);
+  drawCount();
   if (!rows.length) { list.innerHTML = \`<div class="center">\${opsBuf.length ? "この条件のログはありません" : "まだログがありません(稼働を開始すると記録されます)"}</div>\`; return; }
-  list.innerHTML = rows.map((o) => {
-    const d = J(o.t), time = \`\${d.mo}/\${d.d} \${pad(d.h)}:\${pad(d.mi)}:\${pad(d.s)}\`;
-    const det = o.d ? Object.entries(o.d).map(([k, v]) => \`<span class="kv"><i>\${esc(OPS_KEY[k] || k)}</i>\${esc(typeof v === "object" ? JSON.stringify(v) : String(v))}</span>\`).join("") : "";
-    const open = opsOpen.has(o.id);
-    const src = o.src === "manual" ? '<span class="op-s">手動</span>' : o.src === "access" ? '<span class="op-s acc">アクセス</span>' : "";
-    return \`<div class="op \${o.lvl}" data-id="\${o.id}">
-      <div class="op-h"><span class="op-t">\${time}</span><span class="op-c">\${esc(o.cat)}</span>\${o.lvl === "debug" ? '<span class="op-l">詳細</span>' : ""}\${src}\${o.tk ? \`<span class="op-k" data-tk="\${esc(o.tk)}" title="この処理のログだけ見る">#\${esc(o.tk)}</span>\` : ""}<span class="op-m">\${esc(o.msg)}</span>\${det ? \`<span class="op-x">\${open ? "▲" : "▼"}</span>\` : ""}</div>
-      \${det && open ? \`<div class="op-d">\${det}</div>\` : ""}
-    </div>\`;
-  }).join("");
-  $$("#ops_list .op").forEach((el) => (el.onclick = (ev) => {
-    const tk = ev.target.closest("[data-tk]");
-    if (tk) { opsTrace = tk.dataset.tk; drawOps(); return; }
-    const id = el.dataset.id; opsOpen.has(id) ? opsOpen.delete(id) : opsOpen.add(id); drawOps();
-  }));
+  list.innerHTML = rows.map((o) => opHtml(o, false)).join("");
 }
 const OPS_KEY = { path: "アクセス先", method: "方式", status: "応答コード", ms: "所要(ミリ秒)", bytes: "データ量", type: "データの種類", location: "転送先", cfRay: "Cloudflare識別番号", cfCache: "キャッシュ", cfMitigated: "Cloudflareの防御", setCookie: "Cookieの更新", waitMs: "待機(ミリ秒)", cookie: "ログイン情報の送信", ua: "名乗り", sendHeaders: "送ったヘッダー", bodyBytes: "送信データ量", todayCount: "今日の通信回数", error: "エラー内容", kind: "エラーの種類", stack: "発生箇所", productId: "商品番号", chatId: "チャット番号", unread: "未読", id: "商品番号", price: "価格", state: "状態", times: "時刻", keys: "変更項目", listingId: "出品番号", url: "出品ページ", pauseUntil: "休止の終了", tracking: "追跡中", queue: "補正待ち", since: "集計開始", waitMs2: "待機" };
 

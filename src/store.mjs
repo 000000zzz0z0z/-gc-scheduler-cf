@@ -3,12 +3,54 @@
 import { DurableObject } from "cloudflare:workers";
 
 export class GcStore extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    // 画面から30秒ごとに届く「ping」には自動で「pong」を返す(保存領域を起こさずに済む)
+    try { ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong")); } catch {}
+  }
+
+  // ===== リアルタイム配信(WebSocket) =====
+  // 画面とつなぎっぱなしの回線を受け付ける。休止(ハイバネーション)対応なので、
+  // ログが流れていない間は保存領域が眠り、無料プランの処理時間を使わない。
+  async fetch(request) {
+    if (request.headers.get("Upgrade") !== "websocket") return new Response("WebSocket only", { status: 426 });
+    const pair = new WebSocketPair();
+    this.ctx.acceptWebSocket(pair[1]);
+    try { pair[1].send(JSON.stringify({ t: "hello", viewers: this.ctx.getWebSockets().length })); } catch {}
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+  async webSocketMessage(ws, msg) { /* ping以外は使わない */ }
+  async webSocketClose(ws, code, reason) { try { ws.close(code, reason); } catch {} }
+  async webSocketError(ws) { try { ws.close(1011, "error"); } catch {} }
+  // 今つながっている画面の数(誰も見ていなければ、1行ずつの即時配信をしない)
+  async viewers() { return this.ctx.getWebSockets().length; }
+  broadcast(obj) {
+    const socks = this.ctx.getWebSockets();
+    if (!socks.length) return 0;
+    const data = JSON.stringify(obj);
+    for (const ws of socks) { try { ws.send(data); } catch {} }
+    return socks.length;
+  }
+  // 保存せずに、つながっている画面へ即座に送るだけ(処理の途中経過を流すため)
+  async liveOps(entries) { return this.broadcast({ t: "ops", ops: entries }); }
+
   async get(key) {
     const v = await this.ctx.storage.get(key);
     return v === undefined ? null : v;
   }
   async put(key, val) {
     await this.ctx.storage.put(key, val);
+    if (key === "net:count" || key === "net:pauseUntil") this.pushNet();
+  }
+  async pushNet() {
+    if (!this.ctx.getWebSockets().length) return;
+    const now = Date.now();
+    const jstDay = (t) => new Date(t + 9 * 3600e3).toISOString().slice(0, 10);
+    const got = await this.ctx.storage.get(["net:pauseUntil", "net:count"]);
+    const pauseUntil = got.get("net:pauseUntil") || 0;
+    let c = got.get("net:count") || { day: jstDay(now), n: 0 };
+    if (c.day !== jstDay(now)) c = { day: jstDay(now), n: 0 };
+    this.broadcast({ t: "net", net: { pauseUntil: pauseUntil > now ? pauseUntil : 0, today: c.n, cap: 2500 } });
   }
   // 出品の権利を取る。前回から gapMs 経っていなければ断る(判定と記録は割り込まれない)
   async claim(now, gapMs) {
@@ -43,6 +85,7 @@ export class GcStore extends DurableObject {
     if (!entries || !entries.length) return;
     const newest = entries.reduce((a, e) => (e.id > a ? e.id : a), "");
     await this.ctx.storage.put("opb:" + newest, { e: entries });
+    this.broadcast({ t: "ops", ops: entries });
   }
   // 旧形式(1件ずつ)。互換のため残す
   async addOps(entries) {

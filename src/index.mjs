@@ -236,6 +236,7 @@ async function handleApi(request, env, path) {
       const { createFetcher } = await import("./net.mjs");
       const store = db(env);
       const log = createLogger("manual");
+      await log.enableLive(store);
       log.info("管理画面", "「今すぐ確認」が押されました");
       const fetcher = createFetcher(store, log);
       const out = {};
@@ -264,6 +265,22 @@ async function handleApi(request, env, path) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // ===== リアルタイム表示の専用回線(WebSocket) =====
+    // ブラウザの WebSocket は独自のヘッダーを付けられないので、パスワードは接続時の1回だけ k= で受け取る
+    if (url.pathname === "/api/stream") {
+      if (request.headers.get("Upgrade") !== "websocket") return new Response("WebSocket only", { status: 426 });
+      let k = url.searchParams.get("k") || "";
+      try { k = decodeURIComponent(k); } catch {}
+      const expected = env.ADMIN_PASSWORD || "";
+      if (!expected || !safeEqual(k, expected)) {
+        await accessLog(env, request, "warn", "リアルタイム表示への接続を拒否しました(パスワード違い)");
+        return new Response("Unauthorized", { status: 401 });
+      }
+      if (!env.GC_STORE) return new Response("no store", { status: 500 });
+      await accessLog(env, request, "debug", "リアルタイム表示の回線がつながりました");
+      return env.GC_STORE.get(env.GC_STORE.idFromName("main")).fetch(request);
+    }
+
     if (url.pathname.startsWith("/api/")) {
       const t0 = Date.now();
       const res = await handleApi(request, env, url.pathname);

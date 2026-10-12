@@ -181,6 +181,7 @@ export async function tick(env, now = Date.now()) {
   const { createLogger, errInfo } = await import("./log.mjs");
   const { createFetcher } = await import("./net.mjs");
   const log = createLogger("auto");
+  const live = await log.enableLive(store); // 画面を開いている人がいれば、ログを1行ずつ即座に流す
   const settings = await load(env, "settings");
   const p = jstParts(now);
   const nowLabel = `${p.mo}/${p.d} ${String(p.h).padStart(2, "0")}:${String(p.mi).padStart(2, "0")}`;
