@@ -60,11 +60,12 @@ function start() {
 }
 function switchTab(t) {
   window.Snd&&Snd.tabSwitch();
+  if (t !== "logs") stopOps();
   tab = t;
   $$(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
   $$(".tab").forEach((el) => el.classList.add("hide"));
   $("#tab-" + t).classList.remove("hide");
-  if (t === "analysis" && !analyticsData) loadAnalytics().then(render);
+  if ((t === "analysis" || t === "schedule") && !analysisData) loadAnalysis().then(render).catch(() => {});
   render();
 }
 
@@ -74,7 +75,7 @@ async function refresh(quiet) {
     state = await api("/state");
     clockOffset = state.now - Math.round((t0 + Date.now()) / 2); // 通信にかかった時間の半分を補正
     if (tab === "home") { if (!logs || !quiet) logs = (await api("/logs")).logs; }
-    if (tab === "analysis" && (!analyticsData || !quiet)) await loadAnalytics();
+    if ((tab === "analysis" || tab === "schedule") && !quiet) await loadAnalysis();
     render();
   } catch (e) { if (!quiet) toast(e.message, true); }
 }
@@ -92,6 +93,7 @@ function render() {
   if (tab === "drafts") renderDrafts();
   if (tab === "schedule") renderSchedule();
   if (tab === "analysis") renderAnalysis();
+  if (tab === "logs" && !$("#ops_list")) renderLogs();
   if (tab === "settings") renderSettings();
 }
 
@@ -143,6 +145,7 @@ function renderHome() {
         <span>${s.paused ? "停止中 — 自動出品はされません" : "稼働中 — 予定時刻に自動出品します"}</span>
       </label>
       <dl class="dl">
+        <dt>出品モード</dt><dd>${({ even: "①均等", own: "②自分データ", market: "③X全体データ" })[s.optimizeMode || "even"]}</dd>
         <dt>今日の出品</dt><dd>${state.today.count} / ${s.dailyLimit} 回</dd>
         <dt>次に出す下書き</dt><dd>${nextDraft ? esc(nextDraft.label) : "<span class='muted'>なし</span>"}</dd>
         <dt>ログイン状態</dt><dd>${state.session.set ? "<span class='pill ok'>登録済み</span>" : "<span class='pill off'>未登録</span>"}</dd>
@@ -272,183 +275,274 @@ function bindDrag() {
 }
 
 // ---- 時間設定 ----
+// ---- 時間(出品モード) ----
+const MODE_INFO = {
+  even: { no: "①", name: "均等に出品", desc: "24時間に15枠を均等に置きます(約96分おき)。偏りのないデータを集めるための基本モードです。最初はこれで始めてください。" },
+  own: { no: "②", name: "自分のデータで最適化", desc: "①で集めた自分の売れ行きから、売れやすい時間帯に寄せます。データが少ないうちは均等のまま。最適化後も一部の枠は未知の時間帯に回し続け、見落としを防ぎます。" },
+  market: { no: "③", name: "X全体のデータで最適化", desc: "ゲームクラブのX出品全体(0〜5,000円)の売れた時刻から、買い手が多くライバルが少ない時間帯に寄せます。全曜日を2周(約2週間)観測するまでは均等のままです。" },
+};
+let analysisData = null;
+async function loadAnalysis() { analysisData = await api("/analysis"); }
+
 function renderSchedule() {
-  const s = state.settings, sc = s.schedule;
+  if (!analysisData) { $("#tab-schedule").innerHTML = "<div class='card'><div class='center'>読み込み中…</div></div>"; loadAnalysis().then(render).catch((e) => toast(e.message, true)); return; }
+  const s = state.settings, mode = s.optimizeMode || "even", a = analysisData;
+  const readyOf = (m) => (m === "own" ? a.ready.own : m === "market" ? a.ready.market : { level: "high", note: "いつでも使えます。" });
+  const lv = { low: "データ不足", mid: "参考程度", high: "十分" };
+  const cards = ["even", "own", "market"].map((m) => {
+    const info = MODE_INFO[m], r = readyOf(m), on = m === mode;
+    return `<div class="mode ${on ? "on" : ""}" data-mode="${m}">
+      <div class="mode-top"><span class="mode-no">${info.no}</span><span class="mode-name">${info.name}</span>${on ? '<span class="pill ok">使用中</span>' : ""}</div>
+      <div class="muted" style="margin:6px 0 8px">${info.desc}</div>
+      <div class="mode-ready ${r.level}">${m === "even" ? "準備OK" : "データ: " + lv[r.level]} ・ ${esc(r.note)}</div>
+      ${on ? "" : `<button class="btn sm" data-pick="${m}" style="margin-top:10px">このモードにする</button>`}
+    </div>`;
+  }).join("");
+  const times = (s.schedule.mode === "manual" ? s.schedule.manual : null) || a.recommend.even;
   $("#tab-schedule").innerHTML = `
     <div class="card">
-      <h2>出品する時間の決め方</h2>
-      <div class="field">
-        <select id="sc_mode">
-          <option value="interval" ${sc.mode === "interval" ? "selected" : ""}>時間帯と回数を決めて等間隔で出す</option>
-          <option value="manual" ${sc.mode === "manual" ? "selected" : ""}>時刻を自分で1つずつ指定する</option>
-        </select>
-      </div>
-      <div id="sc_interval" class="${sc.mode === "manual" ? "hide" : ""}">
-        <div class="row">
-          <div class="field"><label>開始</label><input type="text" id="sc_start" value="${sc.start}" placeholder="9:00"></div>
-          <div class="field"><label>終了</label><input type="text" id="sc_end" value="${sc.end}" placeholder="24:00"></div>
-          <div class="field"><label>回数(最大${s.dailyLimit})</label><input type="number" id="sc_count" value="${sc.count}" min="1" max="${s.dailyLimit}"></div>
-        </div>
-        <div class="muted" id="sc_preview"></div>
-      </div>
-      <div id="sc_manual" class="${sc.mode === "manual" ? "" : "hide"}">
-        <div class="field"><label>時刻(1行に1つ、24時間表記)</label>
-          <textarea id="sc_times" rows="6" style="font-family:ui-monospace,monospace">${(sc.manual || []).join("\n")}</textarea></div>
-        <button class="btn sm" id="sc_suggest">分析結果から推奨時刻を入れる</button>
-      </div>
-      <button class="btn p" id="sc_save" style="margin-top:14px">保存する</button>
+      <h2>出品モード</h2>
+      ${cards}
     </div>
+    <div class="card">
+      <h2>現在のスケジュール <span class="q">${state.slots.length}枠</span></h2>
+      <div class="slots">${state.slots.map((m) => `<span class="slot">${hm2str(m)}</span>`).join("")}</div>
+      <div class="muted" style="margin-top:10px">②③のモードでは、毎日0時にデータから作り直します。データが足りない間は自動的に①と同じ均等スケジュールになります。</div>
+      <button class="btn" id="sc_rebuild" style="margin-top:12px">今すぐ作り直す</button>
     </div>`;
-  const upd = () => {
-    const slots = previewSlots();
-    $("#sc_preview").innerHTML = slots.length ? `出品時刻: ${slots.map(hm2str).join(" / ")}<br>間隔 約${slots.length > 1 ? Math.round((slots[slots.length - 1] - slots[0]) / (slots.length - 1)) : 0}分` : "時間帯が正しくありません";
+  $$("[data-pick]").forEach((b) => b.onclick = async () => {
+    const m = b.dataset.pick;
+    if (!confirm(`出品モードを「${MODE_INFO[m].no} ${MODE_INFO[m].name}」に変更しますか?\nスケジュールがすぐに作り直されます。`)) return;
+    try { const r = await api("/mode", { method: "POST", body: JSON.stringify({ mode: m }) }); toast(r.reason && r.reason.endsWith("-low") ? "変更しました(データ不足のため当面は均等です)" : "変更しました"); analysisData = null; refresh(); }
+    catch (e) { toast(e.message, true); }
+  });
+  $("#sc_rebuild").onclick = async () => {
+    try { const r = await api("/mode", { method: "POST", body: JSON.stringify({ mode }) }); toast(`作り直しました(${r.times.length}枠)`); analysisData = null; refresh(); }
+    catch (e) { toast(e.message, true); }
   };
-  $("#sc_mode").onchange = (e) => { $("#sc_interval").classList.toggle("hide", e.target.value === "manual"); $("#sc_manual").classList.toggle("hide", e.target.value !== "manual"); };
-  ["sc_start", "sc_end", "sc_count"].forEach((id) => $("#" + id) && ($("#" + id).oninput = upd));
-  upd();
-  $("#sc_suggest").onclick = async () => { if (!logs) await loadLogs(); const best = bestHours(6); if (!best.length) return toast("まだ分析データがありません", true); $("#sc_times").value = best.map((h) => `${h}:00`).join("\n"); toast("推奨時刻を入れました(確認して保存してください)"); };
-  $("#sc_save").onclick = async () => {
-    const mode = $("#sc_mode").value;
-    const body = { schedule: { mode } };
-    if (mode === "interval") { body.schedule.start = $("#sc_start").value.trim(); body.schedule.end = $("#sc_end").value.trim(); body.schedule.count = Number($("#sc_count").value); }
-    else body.schedule.manual = $("#sc_times").value.split("\n").map((x) => x.trim()).filter(Boolean);
-    try { await api("/settings", { method: "POST", body: JSON.stringify(body) }); toast("保存しました"); refresh(); } catch (e) { toast(e.message, true); }
-  };
-}
-function previewSlots() {
-  const n = Math.max(1, Math.min(state.settings.dailyLimit, Number($("#sc_count").value) || 1));
-  const p = (v) => { const m = String(v).match(/^(\d{1,2}):(\d{2})$/); return m ? +m[1] * 60 + +m[2] : NaN; };
-  const s = p($("#sc_start").value), e = p($("#sc_end").value);
-  if (!(e - s > 0)) return [];
-  const step = (e - s) / n, out = [];
-  for (let i = 0; i < n; i++) { const v = Math.round(s + i * step); if (v < 1440) out.push(v); }
-  return out;
 }
 
 // ---- 分析 ----
-let analyticsData = null;
-async function loadAnalytics() { analyticsData = await api("/analytics"); }
+const WD = ["日", "月", "火", "水", "木", "金", "土"];
+let anView = "own", anMetric = { own: "rate", market: "demand" };
+
+// 168マス(曜日×時間)の表。values[i] は数値 or null(データなし)。color[i] は 0〜1 の濃さ
+function grid(values, color, { fmt = (v) => v, hue = "pink", id = "g" } = {}) {
+  const rgb = hue === "green" ? "57,255,139" : hue === "cyan" ? "56,245,230" : "255,45,149";
+  let h = `<div class="grid"><table><thead><tr><th class="wdh"></th>`;
+  for (let hr = 0; hr < 24; hr++) h += `<th>${hr}</th>`;
+  h += `</tr></thead><tbody>`;
+  for (let w = 0; w < 7; w++) {
+    h += `<tr><th class="wdh">${WD[w]}</th>`;
+    for (let hr = 0; hr < 24; hr++) {
+      const i = w * 24 + hr, v = values[i];
+      const has = v !== null && v !== undefined;
+      const a = has ? 0.1 + 0.85 * Math.max(0, Math.min(1, color[i] || 0)) : 0;
+      const txt = has ? fmt(v) : "";
+      const dark = a > 0.55;
+      h += `<td data-g="${id}" data-i="${i}" style="background:${has ? `rgba(${rgb},${a.toFixed(2)})` : "transparent"};color:${dark ? "#05060a" : "var(--ink)"}">${txt}</td>`;
+    }
+    h += `</tr>`;
+  }
+  return h + `</tbody></table></div><div class="grid-detail" id="${id}-detail">マスをタップすると詳細が出ます</div>`;
+}
+const cellName = (i) => `${WD[Math.floor(i / 24)]}曜 ${Math.floor(i % 24)}時台`;
+const norm01 = (arr) => { const v = arr.filter((x) => x !== null && x !== undefined); const mx = Math.max(...v, 0), mn = Math.min(...v, 0); return arr.map((x) => (x === null || x === undefined ? 0 : mx > mn ? (x - mn) / (mx - mn) : 0.5)); };
 
 function renderAnalysis() {
-  if (!analyticsData) { $("#tab-analysis").innerHTML = "<div class='card'><div class='center'>分析データを読み込み中…</div></div>"; loadAnalytics().then(render); return; }
-  const a = analyticsData;
-  const conf = a.confidence;
-  const wd = ["日", "月", "火", "水", "木", "金", "土"];
-  const lastScan = a.lastScan ? fmtDate(a.lastScan) : "まだ";
-
-  // 時間帯ランキング(売れやすさスコア順)
-  const hourRank = a.hour.map((c, h) => ({ h, ...c })).filter((x) => x.listed > 0).sort((x, y) => y.rate - x.rate).slice(0, 6);
-  // 曜日ランキング
-  const wdRank = a.wday.map((c, w) => ({ w, rate: c.listed ? c.sold / c.listed : 0, ...c })).filter((x) => x.listed > 0).sort((x, y) => y.rate - x.rate);
-
+  if (!analysisData) { $("#tab-analysis").innerHTML = "<div class='card'><div class='center'>分析データを読み込み中…</div></div>"; loadAnalysis().then(render).catch((e) => toast(e.message, true)); return; }
+  const a = analysisData;
   $("#tab-analysis").innerHTML = `
+    <div class="seg"><button data-v="own" class="${anView === "own" ? "on" : ""}">② 自分のデータ</button><button data-v="market" class="${anView === "market" ? "on" : ""}">③ X全体のデータ</button></div>
+    <div id="an-body"></div>
     <div class="card">
-      <h2>概要 <span class="q">Xアカウントのみ・ゲームクラブの実データ</span></h2>
-      <dl class="dl">
-        <dt>分析した出品</dt><dd>${a.totalListed} 件</dd>
-        <dt>売れた数</dt><dd>${a.totalSold} 件</dd>
-        <dt>全体の売却率</dt><dd>${(a.globalRate * 100).toFixed(1)} %</dd>
-        <dt>正確な販売時刻</dt><dd>${a.exactCount} 件</dd>
-        <dt>結果待ち(出品48時間以内)</dt><dd>${a.pending} 件</dd>
-        <dt>過去データの取り込み</dt><dd>${a.backfill ? (a.backfill.done ? "完了" : `残り${a.backfill.left}ページ`) : "未開始"}</dd>
-        <dt>販売時刻の取得待ち</dt><dd>${a.chatLeft} 件</dd>
-        <dt>最終スキャン</dt><dd>${lastScan}</dd>
-      </dl>
-      <div class="muted" style="margin-top:8px">売却率は「売れた」か「出品から48時間以上たった」出品だけで計算しています(出品直後で結果待ちのものは含めません)。</div>
-      <div class="banner ${conf.level === "high" ? "info" : "warn"}" style="margin-top:12px;margin-bottom:0">
-        <div><b>データの信頼度: ${conf.label}</b><br>${esc(conf.note)}</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>時間帯 × 曜日(売れやすさ)</h2>
-      <div class="muted" style="margin-bottom:8px">濃いマスほど、その曜日・時間に出すと売れやすい傾向です。マスに触れると件数が出ます。</div>
-      ${buildHeatV2(a)}
-    </div>
-
-    <div class="card">
-      <h2>購入が多い時間帯</h2>
-      <div class="muted" style="margin-bottom:8px">実際に購入された時刻の分布です。濃いマスほど、その曜日・時間に買われています。</div>
-      ${buildBuyHeat(a)}
-    </div>
-
-    <div class="card">
-      <h2>売れやすい時間帯 上位 <span class="q">出品した時刻ごと</span></h2>
-      ${hourRank.length ? hourRank.map((x) => `<div class="log"><span class="t">${pad(x.h)}:00</span><span class="m">売れやすさ ${(x.rate * 100).toFixed(0)}% ・ 出品${x.listed}件/売れた${x.sold}件${x.medHours ? ` ・ 中央${x.medHours.toFixed(1)}時間で成約` : ""}${x.avgViews ? ` ・ 平均閲覧${x.avgViews.toFixed(0)}` : ""}</span></div>`).join("") : "<div class='center'>データがたまると表示されます</div>"}
-    </div>
-
-    <div class="card">
-      <h2>曜日別</h2>
-      ${wdRank.length ? wdRank.map((x) => `<div class="log"><span class="t">${wd[x.w]}曜</span><span class="m">売却率 ${(x.rate * 100).toFixed(0)}% ・ 出品${x.listed}件/売れた${x.sold}件</span></div>`).join("") : "<div class='center'>データがたまると表示されます</div>"}
-    </div>
-
-    <div class="card">
-      <h2>おすすめスケジュール</h2>
-      <div class="muted" style="margin-bottom:10px">分析から、売れやすい時間帯に寄せた${a.recommend.length}枠の出品時刻です。</div>
-      <div class="slots">${a.recommend.map((t) => `<span class="slot">${t}</span>`).join("")}</div>
-      <button class="btn p" id="an_apply" style="margin-top:14px" ${conf.level === "low" ? "disabled" : ""}>この時刻を時間設定に反映する</button>
-      ${conf.level === "low" ? "<div class='muted' style='margin-top:8px'>データが集まるまで反映はできません。</div>" : ""}
-    </div>
-
-    <div class="card">
-      <h2>今すぐデータ更新</h2>
-      <div class="muted" style="margin-bottom:10px">通常は10分おきに自動で集計されます。過去データの取り込みは少しずつ進むので、早く終わらせたいときはこのボタンを何回か押してください。</div>
-      <button class="btn" id="an_scan">今すぐスキャン</button>
+      <h2>今すぐ確認</h2>
+      <div class="muted" style="margin-bottom:10px">通常は自動(自分の売れ行き10分おき・市場調査15分おき)です。すぐ最新にしたいときに押してください。ゲームクラブに負担をかけないよう、数十秒かかります。</div>
+      <button class="btn" id="an_scan">今すぐ確認する</button>
       <div class="muted" id="an_scanMsg" style="margin-top:8px"></div>
     </div>`;
-
-  if ($("#an_apply")) $("#an_apply").onclick = async () => {
-    try { const r = await api("/analytics/apply", { method: "POST", body: "{}" }); toast(`${r.times.length}枠を反映しました`); refresh(); } catch (e) { toast(e.message, true); }
-  };
+  $$(".seg button").forEach((b) => (b.onclick = () => { anView = b.dataset.v; window.Snd && Snd.tabSwitch(); renderAnalysis(); }));
+  if (anView === "own") renderOwnView(a); else renderMarketView(a);
   $("#an_scan").onclick = async (e) => {
-    e.target.disabled = true; $("#an_scanMsg").textContent = "スキャン中…(30秒ほどかかります)";
-    try { const r = await api("/scan", { method: "POST", body: "{}" }); $("#an_scanMsg").textContent = r.skipped ? `スキップ: ${r.skipped === "session" ? "ログイン状態が切れています" : r.skipped}` : `完了(新たに売れた${r.newlySold}件・過去データ残り${r.backfillLeft}ページ・販売時刻の取得待ち${r.chatLeft}件)`; await loadAnalytics(); render(); }
-    catch (err) { $("#an_scanMsg").textContent = err.message; }
+    e.target.disabled = true; $("#an_scanMsg").textContent = "確認中…(30〜60秒かかります)";
+    try {
+      const r = await api("/scan", { method: "POST", body: "{}" });
+      const o = r.own || {}, m = r.market || {};
+      $("#an_scanMsg").textContent = `完了: 自分=新たに売れた${o.sold || 0}件・販売日時で補正${o.exact || 0}件 / 市場=消えた商品${m.vanished || 0}件・売れた${m.sold || 0}件`;
+      analysisData = null; await loadAnalysis(); renderAnalysis();
+    } catch (err) { $("#an_scanMsg").textContent = err.message; }
     e.target.disabled = false;
   };
 }
 
-function buildHeatV2(a) {
-  const wd = ["日", "月", "火", "水", "木", "金", "土"];
-  let max = 0.0001;
-  for (const k in a.score) if (a.score[k].listed > 0) max = Math.max(max, a.score[k].rate);
-  let html = '<div class="heat"><table><tr><th></th>';
-  for (let h = 0; h < 24; h += 2) html += `<th colspan="2">${h}</th>`;
-  html += "</tr>";
-  for (let w = 0; w < 7; w++) {
-    html += `<tr><th>${wd[w]}</th>`;
-    for (let h = 0; h < 24; h++) {
-      const c = a.score[w + "-" + h];
-      const has = c && c.listed > 0;
-      const alpha = has ? 0.12 + 0.88 * (c.rate / max) : 0;
-      const bg = has ? `rgba(255,45,149,${alpha})` : "transparent";
-      const title = has ? `${wd[w]} ${h}時: 出品${c.listed} 売れた${c.sold} (${(c.rate * 100).toFixed(0)}%)` : `${wd[w]} ${h}時: データなし`;
-      html += `<td class="c" style="background:${bg}" title="${title}"></td>`;
-    }
-    html += "</tr>";
-  }
-  return html + "</table></div>";
+function bindGrid(id, detailOf) {
+  $$(`td[data-g="${id}"]`).forEach((td) => (td.onclick = () => {
+    $$(`td[data-g="${id}"].sel`).forEach((x) => x.classList.remove("sel"));
+    td.classList.add("sel");
+    $(`#${id}-detail`).innerHTML = detailOf(Number(td.dataset.i));
+  }));
 }
-function buildBuyHeat(a) {
-  const wd = ["日", "月", "火", "水", "木", "金", "土"];
-  const vals = Object.values(a.buy || {});
-  if (!vals.length) return "<div class='center'>販売時刻が分かった取引がまだありません</div>";
-  const max = Math.max(...vals);
-  let html = '<div class="heat"><table><tr><th></th>';
-  for (let h = 0; h < 24; h += 2) html += `<th colspan="2">${h}</th>`;
-  html += "</tr>";
-  for (let w = 0; w < 7; w++) {
-    html += `<tr><th>${wd[w]}</th>`;
-    for (let h = 0; h < 24; h++) {
-      const n = a.buy[w + "-" + h] || 0;
-      const bg = n ? `rgba(57,255,139,${0.15 + 0.85 * (n / max)})` : "transparent";
-      html += `<td class="c" style="background:${bg}" title="${wd[w]} ${h}時: 購入${n}件"></td>`;
-    }
-    html += "</tr>";
-  }
-  return html + "</table></div>";
+
+function rankList(items, empty) {
+  if (!items.length) return `<div class="center">${empty}</div>`;
+  return items.map((x, k) => `<div class="rank"><span class="rk">${k + 1}</span><span class="rn">${x.name}</span><span class="rv">${x.text}</span></div>`).join("");
 }
-function fmtDur(ms) { const h = ms / 3600e3; if (h < 1) return `${Math.round(ms / 60e3)}分`; if (h < 24) return `${h.toFixed(1)}時間`; return `${(h / 24).toFixed(1)}日`; }
+
+function renderOwnView(a) {
+  const o = a.own, r = a.ready.own;
+  const lv = { low: "データ不足", mid: "参考程度", high: "十分" };
+  const g = o.eligible ? o.sold48 / o.eligible : 0;
+  const metric = anMetric.own;
+  let values, color, fmt, hue, detail, ranking;
+  if (metric === "rate") {
+    values = o.cells.map((c) => (c.n ? c.sold / c.n : null));
+    const K = 2; color = norm01(o.cells.map((c) => (c.n ? (c.sold + K * g) / (c.n + K) : null)));
+    fmt = (v) => Math.round(v * 100); hue = "pink";
+    detail = (i) => { const c = o.cells[i]; return c.n ? `<b>${cellName(i)}</b> に出品: ${c.n}件中 <b>${c.sold}件</b> が48時間以内に売れた(${Math.round((c.sold / c.n) * 100)}%)${c.hours.length ? ` ・ 売れるまで平均${(c.hours.reduce((x, y) => x + y, 0) / c.hours.length).toFixed(1)}時間` : ""}` : `<b>${cellName(i)}</b>: まだこの時間に出品した結果がありません`; };
+    ranking = o.cells.map((c, i) => ({ i, c })).filter((x) => x.c.n >= 2).sort((p, q) => q.c.sold / q.c.n - p.c.sold / p.c.n || q.c.n - p.c.n).slice(0, 10)
+      .map((x) => ({ name: cellName(x.i), text: `${Math.round((x.c.sold / x.c.n) * 100)}%(${x.c.n}件中${x.c.sold}件)` }));
+  } else {
+    values = o.buy.map((v) => (v ? v : null)); color = norm01(o.buy); fmt = (v) => v; hue = "green";
+    detail = (i) => `<b>${cellName(i)}</b> に購入された: <b>${o.buy[i]}件</b>`;
+    ranking = o.buy.map((v, i) => ({ i, v })).filter((x) => x.v > 0).sort((p, q) => q.v - p.v).slice(0, 10).map((x) => ({ name: cellName(x.i), text: `${x.v}件` }));
+  }
+  $("#an-body").innerHTML = `
+    <div class="card">
+      <h2>概要 <span class="q">このツールが出品した商品だけ(過去の偏ったデータは使いません)</span></h2>
+      <dl class="dl">
+        <dt>集計開始</dt><dd>${o.since ? fmtDate(o.since) + `(${o.days}日目)` : "まだ出品なし"}</dd>
+        <dt>ツールが出品した数</dt><dd>${o.total} 件</dd>
+        <dt>結果が出た出品</dt><dd>${o.eligible} 件</dd>
+        <dt>48時間以内に売れた</dt><dd>${o.sold48} 件(${(g * 100).toFixed(1)}%)</dd>
+        <dt>結果待ち(出品48時間以内)</dt><dd>${o.pending} 件</dd>
+        <dt>売れた総数 / 正確な販売時刻</dt><dd>${o.soldAll} 件 / ${o.exact} 件</dd>
+        <dt>販売日時の取得待ち</dt><dd>${o.waiting} 件</dd>
+      </dl>
+      <div class="banner ${r.level === "high" ? "info" : "warn"}" style="margin:12px 0 0"><div><b>データの信頼度: ${lv[r.level]}</b><br>${esc(r.note)}</div></div>
+    </div>
+    <div class="card">
+      <h2>曜日 × 時間</h2>
+      <div class="seg sm"><button data-m="rate" class="${metric === "rate" ? "on" : ""}">売れた割合(出品した時刻)</button><button data-m="buy" class="${metric === "buy" ? "on" : ""}">買われた時刻</button></div>
+      <div class="muted" style="margin:8px 0">${metric === "rate" ? "マスの数字=その曜日・時間に出品したもののうち、48時間以内に売れた割合(%)。件数が少ないマスは色を控えめにしています。" : "マスの数字=その曜日・時間に実際に買われた件数。"}</div>
+      ${grid(values, color, { fmt, hue, id: "go" })}
+    </div>
+    <div class="card"><h2>${metric === "rate" ? "売れやすい曜日×時間 上位10" : "よく買われる曜日×時間 上位10"}</h2>${rankList(ranking, metric === "rate" ? "同じマスに2件以上の結果がたまると表示されます" : "購入の記録がたまると表示されます")}</div>
+    <div class="card"><h2>このデータから作ったスケジュール(②)</h2><div class="slots">${a.recommend.own.map((t) => `<span class="slot">${t}</span>`).join("")}</div>
+      <div class="muted" style="margin-top:8px">${r.level === "low" ? "データ不足のため、②を選んでも当面は均等出品になります。" : "時間タブで②を選ぶと、このスケジュールが使われます。"}</div></div>`;
+  $$("[data-m]").forEach((b) => (b.onclick = () => { anMetric.own = b.dataset.m; renderAnalysis(); }));
+  bindGrid("go", detail);
+}
+
+function renderMarketView(a) {
+  const m = a.market, r = a.ready.market;
+  const lv = { low: "データ不足", mid: "参考程度", high: "十分" };
+  const hrs = m.obs.map((x) => x / 60);
+  const ok = (i) => hrs[i] >= 0.25; // 15分以上観測したマスだけ数字を出す
+  const demand = m.sales.map((v, i) => (ok(i) ? v / hrs[i] : null));
+  const supply = m.supply.map((v, i) => (ok(i) ? v / hrs[i] : null));
+  const nd = norm01(demand), ns = norm01(supply);
+  const score = demand.map((d, i) => (d === null ? null : 0.7 * nd[i] + 0.3 * (1 - ns[i])));
+  const metric = anMetric.market;
+  const conf = { demand: [demand, norm01(demand), (v) => v.toFixed(1), "pink"], supply: [supply, norm01(supply), (v) => Math.round(v), "cyan"], score: [score, norm01(score), (v) => Math.round(v * 100), "green"] }[metric];
+  const detail = (i) => ok(i) ? `<b>${cellName(i)}</b>: 観測${hrs[i].toFixed(1)}時間 ・ 売れた${m.sales[i]}件(1時間あたり${demand[i].toFixed(2)}件) ・ ライバルの新着${m.supply[i]}件(1時間あたり${supply[i].toFixed(1)}件) ・ 狙い目スコア${Math.round(score[i] * 100)}` : `<b>${cellName(i)}</b>: まだ十分に観測していません`;
+  const arr = metric === "supply" ? supply.map((v) => (v === null ? null : -v)) : conf[0];
+  const ranking = arr.map((v, i) => ({ v, i })).filter((x) => x.v !== null && hrs[x.i] >= 0.5).sort((p, q) => q.v - p.v).slice(0, 10)
+    .map((x) => ({ name: cellName(x.i), text: metric === "demand" ? `1時間あたり${demand[x.i].toFixed(2)}件` : metric === "supply" ? `ライバル${supply[x.i].toFixed(1)}件/時(少ない)` : `スコア${Math.round(score[x.i] * 100)}(需要${demand[x.i].toFixed(2)}・ライバル${supply[x.i].toFixed(1)})` }));
+  const note = { demand: "マスの数字=1時間あたりに売れたX出品の件数(0〜5,000円)。観測時間で割っているので、見ていた時間の長さに左右されません。", supply: "マスの数字=1時間あたりの新規出品・更新の件数(ライバルの多さ)。少ないほど自分の出品が目立ちます。", score: "マスの数字=狙い目スコア(0〜100)。買われやすさ(7割)とライバルの少なさ(3割)を合わせたもので、③のスケジュールはこれを使います。" }[metric];
+  $("#an-body").innerHTML = `
+    <div class="card">
+      <h2>概要 <span class="q">X(Twitter)・0〜5,000円・注目アカウント除外</span></h2>
+      <dl class="dl">
+        <dt>観測開始</dt><dd>${m.firstAt ? fmtDate(m.firstAt) : "まだ"}</dd>
+        <dt>観測した日数 / 時間</dt><dd>${m.days} 日 / ${m.obsHours.toFixed(1)} 時間</dd>
+        <dt>一覧の確認回数</dt><dd>${m.polls} 回</dd>
+        <dt>売れた件数(推定)</dt><dd>${m.totalSales} 件</dd>
+        <dt>記録したライバルの新着</dt><dd>${m.totalSupply} 件</dd>
+        <dt>売れたか確認待ち</dt><dd>${m.verifyLeft} 件</dd>
+        <dt>最終調査</dt><dd>${m.lastPoll ? fmtDate(m.lastPoll) : "まだ"}</dd>
+      </dl>
+      <div class="banner ${r.level === "high" ? "info" : "warn"}" style="margin:12px 0 0"><div><b>データの信頼度: ${lv[r.level]}</b><br>${esc(r.note)}</div></div>
+    </div>
+    <div class="card">
+      <h2>曜日 × 時間</h2>
+      <div class="seg sm"><button data-m="demand" class="${metric === "demand" ? "on" : ""}">売れた件数</button><button data-m="supply" class="${metric === "supply" ? "on" : ""}">ライバル数</button><button data-m="score" class="${metric === "score" ? "on" : ""}">狙い目</button></div>
+      <div class="muted" style="margin:8px 0">${note}</div>
+      ${grid(conf[0], conf[1], { fmt: conf[2], hue: conf[3], id: "gm" })}
+    </div>
+    <div class="card"><h2>${metric === "demand" ? "よく売れる曜日×時間 上位10" : metric === "supply" ? "ライバルが少ない曜日×時間 上位10" : "狙い目の曜日×時間 上位10"}</h2>${rankList(ranking, "30分以上観測したマスがたまると表示されます")}</div>
+    <div class="card"><h2>最近売れたX出品</h2>${m.recent.length ? m.recent.map((e) => `<div class="log"><span class="t">${fmtDate(e.at)}</span><span class="m">商品${e.id}</span><span class="t">${Number(e.price).toLocaleString()}円</span></div>`).join("") : "<div class='center'>まだ検知していません</div>"}</div>
+    <div class="card"><h2>このデータから作ったスケジュール(③)</h2><div class="slots">${a.recommend.market.map((t) => `<span class="slot">${t}</span>`).join("")}</div>
+      <div class="muted" style="margin-top:8px">${r.level === "low" ? "データ不足のため、③を選んでも当面は均等出品になります。" : "時間タブで③を選ぶと、このスケジュールが使われます。"}</div></div>`;
+  $$("[data-m]").forEach((b) => (b.onclick = () => { anMetric.market = b.dataset.m; renderAnalysis(); }));
+  bindGrid("gm", detail);
+}
+
+// ---- ログ(リアルタイム) ----
+const LOG_CATS = ["すべて", "出品", "売れ行き", "市場調査", "最適化", "通信", "管理画面", "システム"];
+let opsBuf = [], opsNewest = "", opsTimer = null, opsCat = "すべて", opsLevel = "all", opsPaused = false, opsNet = null, opsOpen = new Set();
+
+async function pollOps(initial) {
+  try {
+    const r = await api(`/ops?limit=${initial ? 400 : 200}${opsNewest && !initial ? "&after=" + encodeURIComponent(opsNewest) : ""}`);
+    opsNet = r.net;
+    if (r.ops.length) {
+      const known = new Set(opsBuf.map((x) => x.id));
+      const fresh = r.ops.filter((x) => !known.has(x.id));
+      opsBuf = fresh.concat(opsBuf).sort((x, y) => (x.id < y.id ? 1 : -1)).slice(0, 1500);
+      opsNewest = opsBuf[0].id;
+      if (!initial && fresh.length && tab === "logs") flashNew(fresh.length);
+    }
+    if (tab === "logs") drawOps();
+  } catch (e) { /* 一時的な失敗は無視 */ }
+}
+function flashNew(n) { const el = $("#ops_new"); if (el) { el.textContent = `+${n}件`; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 1500); } }
+function startOps() { if (opsTimer) return; pollOps(!opsBuf.length); opsTimer = setInterval(() => { if (!opsPaused && !document.hidden) pollOps(false); }, 4000); }
+function stopOps() { clearInterval(opsTimer); opsTimer = null; }
+
+function renderLogs() {
+  $("#tab-logs").innerHTML = `
+    <div class="card">
+      <h2>動作ログ <span class="q">ツールが何をしたかを、すべて記録しています</span><span id="ops_new" class="newbadge"></span></h2>
+      <div id="ops_net" class="netbar"></div>
+      <div class="chips" id="ops_cats">${LOG_CATS.map((c) => `<button data-c="${c}" class="${c === opsCat ? "on" : ""}">${c}</button>`).join("")}</div>
+      <div class="row" style="margin-top:10px;align-items:center">
+        <select id="ops_lvl" style="flex:0 0 auto;width:auto">
+          <option value="all" ${opsLevel === "all" ? "selected" : ""}>すべての重要度</option>
+          <option value="warn" ${opsLevel === "warn" ? "selected" : ""}>警告とエラーだけ</option>
+          <option value="error" ${opsLevel === "error" ? "selected" : ""}>エラーだけ</option>
+        </select>
+        <label class="switch" style="flex:0 0 auto"><input type="checkbox" id="ops_live" ${opsPaused ? "" : "checked"}><span class="track"></span><span>自動更新(4秒ごと)</span></label>
+      </div>
+    </div>
+    <div class="card" style="padding:8px 10px"><div id="ops_list"><div class="center">読み込み中…</div></div></div>`;
+  $$("#ops_cats button").forEach((b) => (b.onclick = () => { opsCat = b.dataset.c; $$("#ops_cats button").forEach((x) => x.classList.toggle("on", x === b)); drawOps(); }));
+  $("#ops_lvl").onchange = (e) => { opsLevel = e.target.value; drawOps(); };
+  $("#ops_live").onchange = (e) => { opsPaused = !e.target.checked; if (!opsPaused) pollOps(false); };
+  drawOps();
+  startOps();
+}
+
+function drawOps() {
+  const list = $("#ops_list"); if (!list) return;
+  if (opsNet) {
+    const pause = opsNet.pauseUntil ? `<span class="bad">休止中(${fmtTime(opsNet.pauseUntil)}まで)</span>` : `<span class="okc">通常稼働</span>`;
+    $("#ops_net").innerHTML = `ゲームクラブへの通信: 今日 <b>${opsNet.today}</b> / ${opsNet.cap} 回 ・ ${pause}`;
+  }
+  const lvOk = (l) => opsLevel === "all" || (opsLevel === "warn" ? l !== "info" : l === "error");
+  const rows = opsBuf.filter((o) => (opsCat === "すべて" || o.cat === opsCat) && lvOk(o.lvl)).slice(0, 400);
+  if (!rows.length) { list.innerHTML = `<div class="center">${opsBuf.length ? "この条件のログはありません" : "まだログがありません(稼働を開始すると記録されます)"}</div>`; return; }
+  list.innerHTML = rows.map((o) => {
+    const d = J(o.t), time = `${d.mo}/${d.d} ${pad(d.h)}:${pad(d.mi)}:${pad(d.s)}`;
+    const det = o.d ? Object.entries(o.d).map(([k, v]) => `<span class="kv"><i>${esc(OPS_KEY[k] || k)}</i>${esc(typeof v === "object" ? JSON.stringify(v) : String(v))}</span>`).join("") : "";
+    const open = opsOpen.has(o.id);
+    return `<div class="op ${o.lvl}" data-id="${o.id}">
+      <div class="op-h"><span class="op-t">${time}</span><span class="op-c">${esc(o.cat)}</span>${o.src === "manual" ? '<span class="op-s">手動</span>' : ""}<span class="op-m">${esc(o.msg)}</span>${det ? `<span class="op-x">${open ? "▲" : "▼"}</span>` : ""}</div>
+      ${det && open ? `<div class="op-d">${det}</div>` : ""}
+    </div>`;
+  }).join("");
+  $$("#ops_list .op").forEach((el) => (el.onclick = () => { const id = el.dataset.id; opsOpen.has(id) ? opsOpen.delete(id) : opsOpen.add(id); drawOps(); }));
+}
+const OPS_KEY = { path: "アクセス先", method: "方式", status: "応答", ms: "所要(ミリ秒)", error: "エラー内容", productId: "商品番号", chatId: "チャット番号", id: "商品番号", price: "価格", state: "状態", times: "時刻", keys: "変更項目" };
 
 // ---- 設定 ----
 function renderSettings() {
@@ -474,12 +568,10 @@ function renderSettings() {
       </div></details>
     </div>
     <div class="card">
-      <h2>スケジュールの自動最適化</h2>
-      <label class="switch" style="margin-bottom:10px"><input type="checkbox" id="st_opt" ${s.autoOptimize ? "checked" : ""}><span class="track"></span><span>毎日0時に、分析結果を時間設定へ自動反映する</span></label>
-      <div class="muted">オンにすると、売れやすい時間帯に15枠を自動で寄せ直します。オフなら手動のままです(分析タブからいつでも手動反映できます)。データが少ないうちは自動反映されません。</div>
+      <h2>出品モード</h2>
+      <div class="muted">出品モード(①均等 / ②自分データ / ③X全体データ)の切り替えは「時間」タブに移動しました。</div>
     </div>
   `;
-  $("#st_opt").onchange = async (e) => { try { await api("/settings", { method: "POST", body: JSON.stringify({ autoOptimize: e.target.checked }) }); window.Snd&&(e.target.checked?Snd.toggleOn():Snd.toggleOff()); toast("保存しました"); refresh(); } catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; } };
   $("#st_sessSave").onclick = async () => { const v = $("#st_sess").value.trim(); if (!v) return toast("値を入力してください", true); try { await api("/session", { method: "POST", body: JSON.stringify({ phpsessid: v }) }); toast("保存しました"); $("#st_sess").value = ""; refresh(); } catch (e) { toast(e.message, true); } };
   if ($("#st_sessDel")) $("#st_sessDel").onclick = async () => { if (!confirm("削除しますか?")) return; await api("/session", { method: "DELETE" }); toast("削除しました"); refresh(); };
   $("#st_test").onclick = async (e) => { e.target.disabled = true; $("#st_testMsg").textContent = "確認中…"; try { const r = await api("/test", { method: "POST", body: "{}" }); window.Snd&&(r.ok?Snd.success():Snd.fail()); $("#st_testMsg").innerHTML = `<span style="color:var(--${r.ok ? "ok" : "bad"})">${r.ok ? "✓ " : "✕ "}${esc(r.message)}</span>`; } catch (err) { $("#st_testMsg").textContent = err.message; } e.target.disabled = false; };

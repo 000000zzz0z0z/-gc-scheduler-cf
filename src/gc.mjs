@@ -113,12 +113,15 @@ function cleanSession(s) {
   return String(s || "").trim().replace(/^PHPSESSID=/i, "").replace(/;.*$/, "").trim();
 }
 
-async function gcFetch(path, session, opts = {}) {
-  return fetch(GC + path, {
-    ...opts,
+// fetcher: net.mjs の通信制御(省略時は素のfetch)。meta: ログ用の情報
+export async function gcFetch(path, session, opts = {}, fetcher = null, meta = {}) {
+  const f = fetcher || ((u, i) => fetch(u, i));
+  const { headers, ...rest } = opts;
+  return f(GC + path, {
+    ...rest,
     redirect: "manual",
-    headers: { "User-Agent": UA, "Accept-Language": "ja", Cookie: `PHPSESSID=${cleanSession(session)}`, ...(opts.headers || {}) },
-  });
+    headers: { "User-Agent": UA, "Accept-Language": "ja", ...(session ? { Cookie: `PHPSESSID=${cleanSession(session)}` } : {}), ...(headers || {}) },
+  }, meta);
 }
 
 async function readRes(res) {
@@ -149,7 +152,7 @@ function summarizeErrors(j) {
   return msg || "応答: " + JSON.stringify(j).slice(0, 300);
 }
 
-export async function publishDraft(draft, session, { now = Date.now() } = {}) {
+export async function publishDraft(draft, session, { now = Date.now(), fetcher = null } = {}) {
   const fields = prepareFields(draft.fields, now);
   const { body, contentType } = buildMultipart(fields);
   const path = `/mypage/products/add?draft=${encodeURIComponent(draft.draftId)}`;
@@ -165,8 +168,10 @@ export async function publishDraft(draft, session, { now = Date.now() } = {}) {
         Origin: GC,
         Referer: GC + path,
       },
-    });
+    }, fetcher, { cat: "出品", what: `出品を送信(下書き #${draft.draftId})` });
   } catch (e) {
+    // 休止中・上限で送らなかった場合は "paused"(出品は作られていない)
+    if (e && e.constructor && e.constructor.name === "PausedError") return { ok: false, kind: "paused", message: e.message };
     return { ok: false, kind: "network", message: `通信できませんでした(${e.message})` };
   }
   const r = await readRes(res);
@@ -187,10 +192,10 @@ export async function publishDraft(draft, session, { now = Date.now() } = {}) {
 }
 
 // 出品せずに、ログイン状態とアクセス可否だけを確かめる
-export async function testConnection(session) {
+export async function testConnection(session, { fetcher = null } = {}) {
   let res;
   try {
-    res = await gcFetch("/mypage", session, { headers: { Accept: "text/html" } });
+    res = await gcFetch("/mypage", session, { headers: { Accept: "text/html" } }, fetcher, { cat: "システム", what: "接続テスト(マイページを確認)" });
   } catch (e) {
     return { ok: false, kind: "network", message: `通信できませんでした(${e.message})` };
   }

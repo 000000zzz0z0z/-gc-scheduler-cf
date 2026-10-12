@@ -32,7 +32,10 @@ const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n)
 function mergeSettings(cur, body) {
   const s = JSON.parse(JSON.stringify(cur));
   if ("paused" in body) s.paused = !!body.paused;
-  if ("autoOptimize" in body) s.autoOptimize = !!body.autoOptimize;
+  if ("optimizeMode" in body) {
+    if (!["even", "own", "market"].includes(body.optimizeMode)) throw new Error("出品モードが正しくありません。");
+    s.optimizeMode = body.optimizeMode;
+  }
   if (body.schedule) {
     const sc = body.schedule;
     if (sc.mode && !["interval", "manual"].includes(sc.mode)) throw new Error("スケジュールの方式が正しくありません。");
@@ -50,6 +53,10 @@ const draftSummary = (d) => {
   return { key: d.key, label: d.label, draftId: d.draftId, repeat: d.repeat, enabled: d.enabled, publishedCount: d.publishedCount || 0, lastPublishedAt: d.lastPublishedAt || null, price: get("price") || null, title: (get("name") || "").slice(0, 80) };
 };
 
+async function adminLog(env, msg, d) {
+  try { const { createLogger } = await import("./log.mjs"); const l = createLogger("manual"); l.info("管理画面", msg, d); await l.flush(db(env)); } catch {}
+}
+
 async function handleApi(request, env, path) {
   if (!env.ADMIN_PASSWORD) return json({ error: "ADMIN_PASSWORD が未設定です。CloudflareのSettings → Variables and Secrets で設定してください。" }, 500);
   if (!authorized(request, env)) return json({ error: "パスワードが違います。" }, 401);
@@ -62,29 +69,38 @@ async function handleApi(request, env, path) {
 
   try {
     if (method === "GET" && sub[0] === "state" && sub.length === 1) {
-      const [settings, secret, drafts, state, lastTick] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "drafts"), load(env, "state"), db(env).get("lastTick")]);
+      const { netStatus } = await import("./net.mjs");
+      const [settings, secret, drafts, state, lastTick, net] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "drafts"), load(env, "state"), db(env).get("lastTick"), netStatus(db(env))]);
       const now = Date.now();
       const idx = nextDraftIndex(drafts, state.pointer);
-      return json({ now, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick });
+      return json({ now, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick, net });
     }
     if (method === "GET" && sub[0] === "logs" && sub.length === 1) return json({ logs: await loadLogs(env, 3000) });
 
-    if (method === "POST" && sub[0] === "settings") { const s = mergeSettings(await load(env, "settings"), body); await save(env, "settings", s); return json({ ok: true, settings: s }); }
+    if (method === "POST" && sub[0] === "settings") {
+      const s = mergeSettings(await load(env, "settings"), body); await save(env, "settings", s);
+      if ("paused" in body) await adminLog(env, body.paused ? "稼働を停止しました" : "稼働を開始しました");
+      else await adminLog(env, "設定を変更しました", { keys: Object.keys(body) });
+      return json({ ok: true, settings: s });
+    }
 
     if (method === "POST" && sub[0] === "session") {
       const v = String(body.phpsessid || "").trim().replace(/^PHPSESSID=/i, "").replace(/;.*$/, "").trim();
       if (!/^[A-Za-z0-9,-]{10,128}$/.test(v)) throw new Error("PHPSESSIDの値の形式が正しくありません。値の部分だけを貼り付けてください。");
       await save(env, "secret", { phpsessid: v, updatedAt: Date.now() });
+      await adminLog(env, "ログイン情報(PHPSESSID)を登録しました");
       const state = await load(env, "state");
       if (state.alert?.kind === "session") { state.alert = null; await save(env, "state", state); }
       return json({ ok: true });
     }
-    if (method === "DELETE" && sub[0] === "session") { await save(env, "secret", {}); return json({ ok: true }); }
+    if (method === "DELETE" && sub[0] === "session") { await save(env, "secret", {}); await adminLog(env, "ログイン情報を削除しました"); return json({ ok: true }); }
 
     if (method === "POST" && sub[0] === "test") {
       const secret = await load(env, "secret");
       if (!secret.phpsessid) throw new Error("先に設定タブでPHPSESSIDを登録してください。");
-      return json(await testConnection(secret.phpsessid));
+      const r = await testConnection(secret.phpsessid);
+      await adminLog(env, `接続テスト: ${r.ok ? "成功" : "失敗"} - ${r.message}`, { status: r.status });
+      return json(r);
     }
     if (method === "POST" && sub[0] === "publish") return json(await publishNext(env, { draftKey: body.key || null, manual: true }));
     if (method === "POST" && sub[0] === "alert" && sub[1] === "clear") { const state = await load(env, "state"); state.alert = null; await save(env, "state", state); return json({ ok: true }); }
@@ -99,6 +115,7 @@ async function handleApi(request, env, path) {
         const d = { key: uuid(), label: String(body.label || "").trim() || title.slice(0, 40) || `下書き${draftId}`, draftId, fields, repeat: true, enabled: true, publishedCount: 0, createdAt: Date.now() };
         drafts.push(d);
         await save(env, "drafts", drafts);
+        await adminLog(env, `下書きを追加しました: #${draftId}「${d.label}」(${fields.length}項目)`);
         return json({ ok: true, draft: draftSummary(d), fieldCount: fields.length });
       }
       if (method === "POST" && sub[1] === "order") {
@@ -131,6 +148,7 @@ async function handleApi(request, env, path) {
         const state = await load(env, "state");
         const i = drafts.indexOf(d);
         drafts.splice(i, 1);
+        await adminLog(env, `下書きを削除しました: #${d.draftId}「${d.label}」`);
         if (state.pointer > i) state.pointer--;
         if (state.pointer >= drafts.length) state.pointer = 0;
         await Promise.all([save(env, "drafts", drafts), save(env, "state", state)]);
@@ -145,26 +163,75 @@ async function handleApi(request, env, path) {
       return json({ ok: true });
     }
 
-    if (method === "GET" && sub[0] === "analytics") {
-      const { loadData, analyze, recommendSlots, confidence } = await import("./analytics.mjs");
-      const data = await loadData(env);
-      const a = analyze(data);
+    // ===== 分析(②自分 / ③X全体) =====
+    if (method === "GET" && sub[0] === "analysis") {
+      const store = db(env);
+      const { loadOwn, ownStats } = await import("./own.mjs");
+      const { loadMarket, marketStats } = await import("./market.mjs");
+      const { recommendFromOwn, recommendFromMarket, evenSlots, readiness } = await import("./optimize.mjs");
       const settings = await load(env, "settings");
-      return json({ ...a, confidence: confidence(a), recommend: recommendSlots(a, { count: settings.dailyLimit }), lastScan: data.lastScan, imported: data.importedHistory });
+      const now = Date.now();
+      const own = ownStats(await loadOwn(store), now);
+      const market = marketStats(await loadMarket(store), now);
+      const ready = readiness(own, market);
+      return json({
+        now, mode: settings.optimizeMode, ready, own, market,
+        recommend: {
+          even: evenSlots(settings.dailyLimit),
+          own: recommendFromOwn(own, { count: settings.dailyLimit, now }),
+          market: recommendFromMarket(market, { count: settings.dailyLimit, now }),
+        },
+      });
     }
-    if (method === "POST" && sub[0] === "analytics" && sub[1] === "apply") {
-      const { loadData, analyze, recommendSlots } = await import("./analytics.mjs");
-      const data = await loadData(env);
-      const settings = await load(env, "settings");
-      const times = recommendSlots(analyze(data), { count: settings.dailyLimit });
-      settings.schedule = { ...settings.schedule, mode: "manual", manual: times };
-      await save(env, "settings", settings);
-      return json({ ok: true, times });
+
+    // ===== 出品モードの切り替え(すぐにスケジュールを作り直す) =====
+    if (method === "POST" && sub[0] === "mode") {
+      const { createLogger } = await import("./log.mjs");
+      const { rebuildSchedule } = await import("./core.mjs");
+      const log = createLogger("manual");
+      const s = mergeSettings(await load(env, "settings"), { optimizeMode: body.mode });
+      await save(env, "settings", s);
+      const label = { even: "①均等", own: "②自分データ", market: "③X全体データ" }[s.optimizeMode];
+      log.info("管理画面", `出品モードを「${label}」に変更しました`);
+      const r = await rebuildSchedule(env, s, log);
+      await log.flush(db(env));
+      return json({ ok: true, ...r });
     }
+
+    // ===== 動作ログ(リアルタイム表示用) =====
+    if (method === "GET" && sub[0] === "ops") {
+      const url = new URL(request.url);
+      const after = url.searchParams.get("after") || "";
+      const limit = Math.min(500, Number(url.searchParams.get("limit")) || 300);
+      const { netStatus } = await import("./net.mjs");
+      const store = db(env);
+      const [ops, net] = await Promise.all([store.listOps(limit, after), netStatus(store)]);
+      return json({ ops, net, now: Date.now() });
+    }
+
+    // ===== 今すぐ確認(自分の売れ行き＋市場調査) =====
     if (method === "POST" && sub[0] === "scan") {
-      const { scanSales } = await import("./analytics.mjs");
-      await db(env).put("lastSalesScan", Date.now());
-      return json(await scanSales(env));
+      const { createLogger } = await import("./log.mjs");
+      const { createFetcher } = await import("./net.mjs");
+      const store = db(env);
+      const log = createLogger("manual");
+      log.info("管理画面", "「今すぐ確認」が押されました");
+      const fetcher = createFetcher(store, log);
+      const out = {};
+      try {
+        const secret = await load(env, "secret");
+        if (secret.phpsessid) {
+          const { scanOwn } = await import("./own.mjs");
+          await store.put("lastOwnScan", Date.now());
+          out.own = await scanOwn(store, secret.phpsessid, fetcher, log);
+        }
+        if (body.market !== false) {
+          const { pollMarket } = await import("./market.mjs");
+          await store.put("lastMarketScan", Date.now());
+          out.market = await pollMarket(store, fetcher, log);
+        }
+      } finally { await fetcher.finish(); await log.flush(store); }
+      return json({ ok: true, ...out });
     }
 
     return json({ error: "見つかりません。" }, 404);
