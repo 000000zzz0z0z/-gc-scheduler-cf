@@ -53,13 +53,30 @@ const draftSummary = (d) => {
   return { key: d.key, label: d.label, draftId: d.draftId, repeat: d.repeat, enabled: d.enabled, publishedCount: d.publishedCount || 0, lastPublishedAt: d.lastPublishedAt || null, price: get("price") || null, title: (get("name") || "").slice(0, 80) };
 };
 
+function who(request) {
+  const cf = request.cf || {};
+  const ua = request.headers.get("user-agent") || "";
+  const dev = /iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Mac OS/.test(ua) ? "Mac" : "不明";
+  const br = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : /Firefox\//.test(ua) ? "Firefox" : "不明";
+  return { IP: request.headers.get("cf-connecting-ip") || "不明", 国: cf.country || "不明", 地域: cf.city || cf.region || undefined, 端末: dev, ブラウザ: br };
+}
+// 画面が数秒おきに自動で取りに来る通信は、記録すると大量になるので個別には残さない
+const POLLING = new Set(["GET /api/ops", "GET /api/state", "GET /api/analysis", "GET /api/logs", "POST /api/hello"]);
+async function accessLog(env, request, lvl, msg, extra) {
+  try { const { createLogger } = await import("./log.mjs"); const l = createLogger("access"); l[lvl]("アクセス", msg, { ...who(request), ...(extra || {}) }); await l.flush(db(env)); } catch {}
+}
+
 async function adminLog(env, msg, d) {
   try { const { createLogger } = await import("./log.mjs"); const l = createLogger("manual"); l.info("管理画面", msg, d); await l.flush(db(env)); } catch {}
 }
 
 async function handleApi(request, env, path) {
   if (!env.ADMIN_PASSWORD) return json({ error: "ADMIN_PASSWORD が未設定です。CloudflareのSettings → Variables and Secrets で設定してください。" }, 500);
-  if (!authorized(request, env)) return json({ error: "パスワードが違います。" }, 401);
+  if (!authorized(request, env)) {
+    const given = request.headers.get("x-admin-key");
+    if (given) await accessLog(env, request, "warn", `パスワード違いのアクセスを拒否しました(${request.method} ${path})`, { 入力されたパスワードの長さ: decodeURIComponent(given).length + "文字(中身は記録しません)" });
+    return json({ error: "パスワードが違います。" }, 401);
+  }
   if (!env.GC_STORE) return json({ error: "保存領域(Durable Object)が未接続です。wrangler.toml を最新版にしてください。" }, 500);
 
   const method = request.method;
@@ -198,15 +215,19 @@ async function handleApi(request, env, path) {
       return json({ ok: true, ...r });
     }
 
+    if (method === "POST" && sub[0] === "hello") { await accessLog(env, request, "info", "管理画面にログインしました"); return json({ ok: true }); }
+
     // ===== 動作ログ(リアルタイム表示用) =====
     if (method === "GET" && sub[0] === "ops") {
       const url = new URL(request.url);
       const after = url.searchParams.get("after") || "";
+      const before = url.searchParams.get("before") || "";
       const limit = Math.min(500, Number(url.searchParams.get("limit")) || 300);
-      const { netStatus } = await import("./net.mjs");
       const store = db(env);
-      const [ops, net] = await Promise.all([store.listOps(limit, after), netStatus(store)]);
-      return json({ ops, net, now: Date.now() });
+      const now = Date.now();
+      if (before) return json({ ops: await store.listOpsBefore(Math.min(500, Number(url.searchParams.get("limit")) || 500), before), now });
+      const r = store.opsWithNet ? await store.opsWithNet(limit, after, now) : { ops: await store.listOps(limit, after), net: await (await import("./net.mjs")).netStatus(store) };
+      return json({ ...r, now });
     }
 
     // ===== 今すぐ確認(自分の売れ行き＋市場調査) =====
@@ -228,7 +249,7 @@ async function handleApi(request, env, path) {
         if (body.market !== false) {
           const { pollMarket } = await import("./market.mjs");
           await store.put("lastMarketScan", Date.now());
-          out.market = await pollMarket(store, fetcher, log);
+          out.market = await pollMarket(store, fetcher, log, Date.now(), { verifyMax: 0 });
         }
       } finally { await fetcher.finish(); await log.flush(store); }
       return json({ ok: true, ...out });
@@ -243,14 +264,20 @@ async function handleApi(request, env, path) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/api/")) return handleApi(request, env, url.pathname);
+    if (url.pathname.startsWith("/api/")) {
+      const t0 = Date.now();
+      const res = await handleApi(request, env, url.pathname);
+      const key = `${request.method} ${url.pathname}`;
+      if (!POLLING.has(key) && res.status !== 401) await accessLog(env, request, res.status >= 400 ? "warn" : "debug", `管理画面の操作: ${key} → 応答${res.status}(${Date.now() - t0}ms)`);
+      return res;
+    }
     if (url.pathname === "/health") return json({ ok: true, storeBound: !!env.GC_STORE, passwordSet: !!env.ADMIN_PASSWORD });
+    if (url.pathname === "/" || url.pathname === "/index.html") await accessLog(env, request, "info", "管理画面が開かれました");
     return new Response(PAGE, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" } });
   },
+  // waitUntil を使うと約30秒で打ち切られるため、処理を直接待つ
   async scheduled(event, env, ctx) {
-    ctx.waitUntil((async () => {
-      try { const r = await tick(env); console.log("tick", JSON.stringify(r)); }
-      catch (e) { console.log("tick error", e.message); }
-    })());
+    try { const r = await tick(env); console.log("tick", JSON.stringify(r)); }
+    catch (e) { console.log("tick error", e.message); }
   },
 };

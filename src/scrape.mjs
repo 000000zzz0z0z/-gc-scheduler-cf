@@ -51,8 +51,10 @@ export async function fetchPage(session, status, page = 1, fetcher = null) {
   const res = await gcFetch(url, session, { headers: { Accept: "text/html" } }, fetcher, { cat: "売れ行き", what: `マイページ「${label}」${page}ページ目を確認` });
   if (res.status !== 200) return { ok: false, status: res.status, items: [], maxPage: 0 };
   const h = await res.text();
-  if (!/rows-list|item-row/.test(h)) return { ok: false, status: "session", items: [], maxPage: 0 };
-  return { ok: true, items: parseListHtml(h), maxPage: parseMaxPage(h) };
+  if (!/rows-list|item-row/.test(h)) return { ok: false, status: "session", items: [], maxPage: 0, bytes: h.length };
+  const t0 = Date.now();
+  const items = parseListHtml(h), maxPage = parseMaxPage(h);
+  return { ok: true, items, maxPage, bytes: h.length, parseMs: Date.now() - t0 };
 }
 
 // 取引チャットのページから、取引情報タブの「販売日時」だけを取る(チャット本文は読まない)
@@ -93,7 +95,9 @@ export async function fetchMarketPage(page, fetcher) {
   const res = await gcFetch(url, null, { headers: { Accept: "text/html" } }, fetcher, { cat: "市場調査", what: `X一覧 ${page}ページ目を確認` });
   if (res.status !== 200) return { ok: false, status: res.status, items: [] };
   const h = await res.text();
-  return { ok: true, items: parseMarketHtml(h) };
+  const t0 = Date.now();
+  const items = parseMarketHtml(h);
+  return { ok: true, items, bytes: h.length, parseMs: Date.now() - t0 };
 }
 // 商品ページで「売り切れ」ボタンが出ているか(説明文中の言葉とは区別する)
 export function parseProductState(htmlText) {

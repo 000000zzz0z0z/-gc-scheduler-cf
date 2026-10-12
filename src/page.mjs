@@ -273,6 +273,16 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
 .op-d{margin-top:6px;display:flex;flex-wrap:wrap;gap:5px}
 .kv{font-size:11px;background:rgba(56,245,230,.06);border:1px solid rgba(56,245,230,.18);border-radius:6px;padding:2px 7px;color:var(--ink);word-break:break-all}
 .kv i{font-style:normal;color:var(--mut);margin-right:5px}
+
+/* ===== ログ(詳細版) ===== */
+.op-l{font-size:10px;color:var(--mut2);border:1px solid var(--mut2);border-radius:6px;padding:0 5px}
+.op.debug{border-left-color:rgba(127,166,160,.3);background:rgba(5,7,12,.3)}
+.op.debug .op-m{color:var(--mut)}
+.op-k{font-size:10px;color:var(--mut2);font-family:ui-monospace,monospace;cursor:pointer;border-bottom:1px dotted var(--mut2)}
+.op-k:hover{color:var(--cyan);border-color:var(--cyan)}
+.op-s.acc{color:var(--amber);border-color:rgba(255,210,60,.45)}
+.trbar{margin-top:10px;font-size:12px;color:var(--mut);padding:7px 10px;border:1px solid rgba(56,245,230,.35);border-radius:9px;background:rgba(56,245,230,.06);display:flex;align-items:center;gap:8px}
+.trbar b{color:var(--cyan)}
 </style>
 </head>
 <body>
@@ -439,7 +449,7 @@ async function tryLogin() {
     const d = await fetch("/api/state", { headers: { "x-admin-key": encodeURIComponent(pw) } });
     if (d.status === 401) { $("#loginMsg").textContent = "パスワードが違います。"; return; }
     if (!d.ok) { $("#loginMsg").textContent = (await d.json()).error || "エラー"; return; }
-    sessionStorage.setItem(KEY, pw); window.Snd&&Snd.boot(); start();
+    sessionStorage.setItem(KEY, pw); window.Snd&&Snd.boot(); fetch("/api/hello", { method: "POST", headers: { "x-admin-key": encodeURIComponent(pw) } }).catch(() => {}); start();
   } catch { $("#loginMsg").textContent = "接続できませんでした。"; }
 }
 $("#logout").onclick = () => { sessionStorage.removeItem(KEY); location.reload(); };
@@ -876,17 +886,18 @@ function renderMarketView(a) {
 }
 
 // ---- ログ(リアルタイム) ----
-const LOG_CATS = ["すべて", "出品", "売れ行き", "市場調査", "最適化", "通信", "管理画面", "システム"];
-let opsBuf = [], opsNewest = "", opsTimer = null, opsCat = "すべて", opsLevel = "all", opsPaused = false, opsNet = null, opsOpen = new Set();
+const LOG_CATS = ["すべて", "定期実行", "出品", "売れ行き", "市場調査", "最適化", "通信", "管理画面", "アクセス", "システム"];
+const LV_NAME = { debug: "詳細", info: "通常", warn: "警告", error: "エラー" };
+let opsBuf = [], opsNewest = "", opsTimer = null, opsCat = "すべて", opsLevel = "all", opsPaused = false, opsNet = null, opsOpen = new Set(), opsQ = "", opsTrace = "";
 
 async function pollOps(initial) {
   try {
-    const r = await api(\`/ops?limit=\${initial ? 400 : 200}\${opsNewest && !initial ? "&after=" + encodeURIComponent(opsNewest) : ""}\`);
+    const r = await api(\`/ops?limit=\${initial ? 500 : 300}\${opsNewest && !initial ? "&after=" + encodeURIComponent(opsNewest) : ""}\`);
     opsNet = r.net;
     if (r.ops.length) {
       const known = new Set(opsBuf.map((x) => x.id));
       const fresh = r.ops.filter((x) => !known.has(x.id));
-      opsBuf = fresh.concat(opsBuf).sort((x, y) => (x.id < y.id ? 1 : -1)).slice(0, 1500);
+      opsBuf = fresh.concat(opsBuf).sort((x, y) => (x.id < y.id ? 1 : -1)).slice(0, 4000);
       opsNewest = opsBuf[0].id;
       if (!initial && fresh.length && tab === "logs") flashNew(fresh.length);
     }
@@ -894,53 +905,96 @@ async function pollOps(initial) {
   } catch (e) { /* 一時的な失敗は無視 */ }
 }
 function flashNew(n) { const el = $("#ops_new"); if (el) { el.textContent = \`+\${n}件\`; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 1500); } }
-function startOps() { if (opsTimer) return; pollOps(!opsBuf.length); opsTimer = setInterval(() => { if (!opsPaused && !document.hidden) pollOps(false); }, 4000); }
+function startOps() { if (opsTimer) return; pollOps(!opsBuf.length); opsTimer = setInterval(() => { if (!opsPaused && !document.hidden) pollOps(false); }, 5000); }
 function stopOps() { clearInterval(opsTimer); opsTimer = null; }
 
 function renderLogs() {
   $("#tab-logs").innerHTML = \`
     <div class="card">
-      <h2>動作ログ <span class="q">ツールが何をしたかを、すべて記録しています</span><span id="ops_new" class="newbadge"></span></h2>
+      <h2>動作ログ <span class="q">ツールのすべての動きを記録しています(7日間保存)</span><span id="ops_new" class="newbadge"></span></h2>
       <div id="ops_net" class="netbar"></div>
       <div class="chips" id="ops_cats">\${LOG_CATS.map((c) => \`<button data-c="\${c}" class="\${c === opsCat ? "on" : ""}">\${c}</button>\`).join("")}</div>
-      <div class="row" style="margin-top:10px;align-items:center">
-        <select id="ops_lvl" style="flex:0 0 auto;width:auto">
-          <option value="all" \${opsLevel === "all" ? "selected" : ""}>すべての重要度</option>
+      <div class="row" style="margin-top:10px;align-items:center;gap:8px">
+        <select id="ops_lvl" style="flex:1 1 160px">
+          <option value="all" \${opsLevel === "all" ? "selected" : ""}>すべて(詳細も表示)</option>
+          <option value="info" \${opsLevel === "info" ? "selected" : ""}>詳細を隠す</option>
           <option value="warn" \${opsLevel === "warn" ? "selected" : ""}>警告とエラーだけ</option>
           <option value="error" \${opsLevel === "error" ? "selected" : ""}>エラーだけ</option>
         </select>
-        <label class="switch" style="flex:0 0 auto"><input type="checkbox" id="ops_live" \${opsPaused ? "" : "checked"}><span class="track"></span><span>自動更新(4秒ごと)</span></label>
+        <input type="text" id="ops_q" placeholder="文字で検索(例: 15344261 / 429 / 取引中)" value="\${esc(opsQ)}" style="flex:2 1 220px">
       </div>
+      <div class="row" style="margin-top:10px;align-items:center;gap:8px">
+        <label class="switch" style="flex:0 0 auto"><input type="checkbox" id="ops_live" \${opsPaused ? "" : "checked"}><span class="track"></span><span>自動更新(5秒ごと)</span></label>
+        <button class="btn sm" id="ops_more">さらに古いログを読む</button>
+        <button class="btn sm" id="ops_dl">表示中のログを保存</button>
+      </div>
+      <div id="ops_tr" class="trbar \${opsTrace ? "" : "hide"}"></div>
     </div>
-    <div class="card" style="padding:8px 10px"><div id="ops_list"><div class="center">読み込み中…</div></div></div>\`;
+    <div class="card" style="padding:8px 10px"><div class="muted" id="ops_count" style="margin:2px 4px 6px"></div><div id="ops_list"><div class="center">読み込み中…</div></div></div>\`;
   $$("#ops_cats button").forEach((b) => (b.onclick = () => { opsCat = b.dataset.c; $$("#ops_cats button").forEach((x) => x.classList.toggle("on", x === b)); drawOps(); }));
   $("#ops_lvl").onchange = (e) => { opsLevel = e.target.value; drawOps(); };
+  let qt; $("#ops_q").oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { opsQ = e.target.value.trim(); drawOps(); }, 250); };
   $("#ops_live").onchange = (e) => { opsPaused = !e.target.checked; if (!opsPaused) pollOps(false); };
+  $("#ops_dl").onclick = () => {
+    const rows = filteredOps();
+    const blob = new Blob([JSON.stringify(rows, null, 1)], { type: "application/json" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    const d = J(nowMs()); a.download = \`gc-log-\${d.y}\${pad(d.mo)}\${pad(d.d)}-\${pad(d.h)}\${pad(d.mi)}.json\`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000); toast(\`\${rows.length}件を保存しました\`);
+  };
+  $("#ops_more").onclick = async (e) => {
+    e.target.disabled = true;
+    try {
+      const oldest = opsBuf.length ? opsBuf[opsBuf.length - 1].id : "";
+      const r = await api(\`/ops?limit=500&before=\${encodeURIComponent(oldest)}\`);
+      const known = new Set(opsBuf.map((x) => x.id));
+      const add = r.ops.filter((x) => !known.has(x.id));
+      opsBuf = opsBuf.concat(add).sort((x, y) => (x.id < y.id ? 1 : -1)).slice(0, 8000);
+      toast(add.length ? \`\${add.length}件読み込みました\` : "これより古いログはありません"); drawOps();
+    } catch (err) { toast(err.message, true); }
+    e.target.disabled = false;
+  };
   drawOps();
   startOps();
+}
+
+function filteredOps() {
+  const rank = { debug: 0, info: 1, warn: 2, error: 3 };
+  const min = { all: 0, info: 1, warn: 2, error: 3 }[opsLevel];
+  const q = opsQ.toLowerCase();
+  return opsBuf.filter((o) => (opsCat === "すべて" || o.cat === opsCat) && rank[o.lvl] >= min && (!opsTrace || o.tk === opsTrace)
+    && (!q || (o.msg + " " + (o.d ? JSON.stringify(o.d) : "")).toLowerCase().includes(q)));
 }
 
 function drawOps() {
   const list = $("#ops_list"); if (!list) return;
   if (opsNet) {
     const pause = opsNet.pauseUntil ? \`<span class="bad">休止中(\${fmtTime(opsNet.pauseUntil)}まで)</span>\` : \`<span class="okc">通常稼働</span>\`;
-    $("#ops_net").innerHTML = \`ゲームクラブへの通信: 今日 <b>\${opsNet.today}</b> / \${opsNet.cap} 回 ・ \${pause}\`;
+    $("#ops_net").innerHTML = \`ゲームクラブへの通信: 今日 <b>\${opsNet.today}</b> / \${opsNet.cap} 回 ・ \${pause} ・ 読み込み済みログ \${opsBuf.length}件\`;
   }
-  const lvOk = (l) => opsLevel === "all" || (opsLevel === "warn" ? l !== "info" : l === "error");
-  const rows = opsBuf.filter((o) => (opsCat === "すべて" || o.cat === opsCat) && lvOk(o.lvl)).slice(0, 400);
+  const trb = $("#ops_tr");
+  if (trb) { trb.classList.toggle("hide", !opsTrace); trb.innerHTML = opsTrace ? \`処理番号 <b>#\${esc(opsTrace)}</b> のログだけを表示中 <button class="btn sm gho" id="ops_trc">解除</button>\` : ""; const c = $("#ops_trc"); if (c) c.onclick = () => { opsTrace = ""; drawOps(); }; }
+  const all = filteredOps();
+  const rows = all.slice(0, 600);
+  $("#ops_count").textContent = all.length ? \`\${all.length}件\${all.length > 600 ? "(新しい600件を表示)" : ""}\` : "";
   if (!rows.length) { list.innerHTML = \`<div class="center">\${opsBuf.length ? "この条件のログはありません" : "まだログがありません(稼働を開始すると記録されます)"}</div>\`; return; }
   list.innerHTML = rows.map((o) => {
     const d = J(o.t), time = \`\${d.mo}/\${d.d} \${pad(d.h)}:\${pad(d.mi)}:\${pad(d.s)}\`;
     const det = o.d ? Object.entries(o.d).map(([k, v]) => \`<span class="kv"><i>\${esc(OPS_KEY[k] || k)}</i>\${esc(typeof v === "object" ? JSON.stringify(v) : String(v))}</span>\`).join("") : "";
     const open = opsOpen.has(o.id);
+    const src = o.src === "manual" ? '<span class="op-s">手動</span>' : o.src === "access" ? '<span class="op-s acc">アクセス</span>' : "";
     return \`<div class="op \${o.lvl}" data-id="\${o.id}">
-      <div class="op-h"><span class="op-t">\${time}</span><span class="op-c">\${esc(o.cat)}</span>\${o.src === "manual" ? '<span class="op-s">手動</span>' : ""}<span class="op-m">\${esc(o.msg)}</span>\${det ? \`<span class="op-x">\${open ? "▲" : "▼"}</span>\` : ""}</div>
+      <div class="op-h"><span class="op-t">\${time}</span><span class="op-c">\${esc(o.cat)}</span>\${o.lvl === "debug" ? '<span class="op-l">詳細</span>' : ""}\${src}\${o.tk ? \`<span class="op-k" data-tk="\${esc(o.tk)}" title="この処理のログだけ見る">#\${esc(o.tk)}</span>\` : ""}<span class="op-m">\${esc(o.msg)}</span>\${det ? \`<span class="op-x">\${open ? "▲" : "▼"}</span>\` : ""}</div>
       \${det && open ? \`<div class="op-d">\${det}</div>\` : ""}
     </div>\`;
   }).join("");
-  $$("#ops_list .op").forEach((el) => (el.onclick = () => { const id = el.dataset.id; opsOpen.has(id) ? opsOpen.delete(id) : opsOpen.add(id); drawOps(); }));
+  $$("#ops_list .op").forEach((el) => (el.onclick = (ev) => {
+    const tk = ev.target.closest("[data-tk]");
+    if (tk) { opsTrace = tk.dataset.tk; drawOps(); return; }
+    const id = el.dataset.id; opsOpen.has(id) ? opsOpen.delete(id) : opsOpen.add(id); drawOps();
+  }));
 }
-const OPS_KEY = { path: "アクセス先", method: "方式", status: "応答", ms: "所要(ミリ秒)", error: "エラー内容", productId: "商品番号", chatId: "チャット番号", id: "商品番号", price: "価格", state: "状態", times: "時刻", keys: "変更項目" };
+const OPS_KEY = { path: "アクセス先", method: "方式", status: "応答コード", ms: "所要(ミリ秒)", bytes: "データ量", type: "データの種類", location: "転送先", cfRay: "Cloudflare識別番号", cfCache: "キャッシュ", cfMitigated: "Cloudflareの防御", setCookie: "Cookieの更新", waitMs: "待機(ミリ秒)", cookie: "ログイン情報の送信", ua: "名乗り", sendHeaders: "送ったヘッダー", bodyBytes: "送信データ量", todayCount: "今日の通信回数", error: "エラー内容", kind: "エラーの種類", stack: "発生箇所", productId: "商品番号", chatId: "チャット番号", unread: "未読", id: "商品番号", price: "価格", state: "状態", times: "時刻", keys: "変更項目", listingId: "出品番号", url: "出品ページ", pauseUntil: "休止の終了", tracking: "追跡中", queue: "補正待ち", since: "集計開始", waitMs2: "待機" };
 
 // ---- 設定 ----
 function renderSettings() {
