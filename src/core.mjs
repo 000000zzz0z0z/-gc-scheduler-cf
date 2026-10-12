@@ -170,7 +170,7 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
 // 1回の処理で行う「重い仕事」(ゲームクラブへの複数回の通信)は1つだけにする。
 // 優先順: 予定枠の出品 → 自分の売れ行き確認(10分おき) → 市場調査の一覧(15分おき) → 消えた商品の確認(少しずつ)
 // 各作業が終わるたびにログと通信回数を保存するので、万一途中で止まっても経過が残る。
-const MODE_LABEL = { even: "①均等", own: "②自分データ", market: "③X全体データ" };
+const MODE_LABEL = { even: "①均等", own: "②自分データ", market: "③引退垢全体データ" };
 const fmtHM = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
 const agoMin = (now, t) => (t ? Math.floor((now - t) / 60e3) + "分前" : "未実施");
 
@@ -320,7 +320,7 @@ export async function rebuildSchedule(env, settings, log, now = Date.now()) {
     const r = readiness({ sold48: 0 }, ms).market;
     log.debug("最適化", `③の入力データ: 観測${ms.days}日・${ms.obsHours.toFixed(1)}時間・売れた${ms.totalSales}件・ライバルの新着${ms.totalSupply}件`, { 信頼度: r.level });
     if (r.level === "low") { log.info("最適化", `市場データが不足のため、均等出品のままにします(${r.note})`); times = evenSlots(settings.dailyLimit); reason = "market-low"; }
-    else { times = recommendFromMarket(ms, { count: settings.dailyLimit, now }); reason = "market"; log.info("最適化", `X全体の市場データからスケジュールを更新しました(${r.note})`, { times }); }
+    else { times = recommendFromMarket(ms, { count: settings.dailyLimit, now }); reason = "market"; log.info("最適化", `引退垢全体の市場データからスケジュールを更新しました(${r.note})`, { times }); }
   } else {
     times = evenSlots(settings.dailyLimit); reason = "even";
   }

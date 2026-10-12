@@ -20,9 +20,9 @@ const hm = (t) => { const p = jstParts(t); return `${p.mo}/${p.d} ${String(p.h).
 
 export async function loadMarket(store) {
   const v = await store.get("market");
-  if (v && v.v === 1) return v;
+  if (v && v.v === 2) return v; // v2 = 引退垢だけの市場データ(v1の全X混在データは使わない)
   return {
-    v: 1, prev: [], prevAt: 0, verify: [], seen: {}, events: [],
+    v: 2, prev: [], prevAt: 0, verify: [], seen: {}, events: [],
     sales: new Array(168).fill(0), supply: new Array(168).fill(0), obs: new Array(168).fill(0),
     days: {}, firstAt: 0, polls: 0, lastPoll: 0,
   };
@@ -36,15 +36,15 @@ export async function pollMarket(store, fetcher, log, now = Date.now(), { verify
   try {
     for (let p = 1; p <= MARKET_PAGES; p++) {
       const r = await fetchMarketPage(p, fetcher);
-      if (!r.ok) { log.warn("市場調査", `X一覧${p}ページ目を読めなかったため、今回の判定は見送ります(ステータス${r.status})`); return { skipped: "page" }; }
+      if (!r.ok) { log.warn("市場調査", `引退垢一覧${p}ページ目を読めなかったため、今回の判定は見送ります(ステータス${r.status})`); return { skipped: "page" }; }
       const c = { 販売中: 0, 売れた: 0, 終了: 0, 注目アカウント: 0, 対象価格帯: 0 };
       for (const x of r.items) { if (x.featured) c.注目アカウント++; else if (x.state === "sold") c.売れた++; else if (x.state === "ended") c.終了++; else { c.販売中++; if (x.price <= PRICE_MAX) c.対象価格帯++; } }
       const ts = r.items.filter((x) => !x.featured && x.t).map((x) => x.t);
-      log.debug("市場調査", `X一覧${p}ページ目: ${r.items.length}件(データ${Math.round((r.bytes || 0) / 1024)}KB・読み取り${r.parseMs}ms)${ts.length ? `・更新日時 ${hm(Math.max(...ts))}〜${hm(Math.min(...ts))}` : ""}`, c);
+      log.debug("市場調査", `引退垢一覧${p}ページ目: ${r.items.length}件(データ${Math.round((r.bytes || 0) / 1024)}KB・読み取り${r.parseMs}ms)${ts.length ? `・更新日時 ${hm(Math.max(...ts))}〜${hm(Math.min(...ts))}` : ""}`, c);
       items = items.concat(r.items);
     }
   } catch (e) {
-    if (e?.constructor?.name !== "PausedError") log.error("市場調査", "X一覧の読み込み中にエラーが起きました", { error: String(e.message || e) });
+    if (e?.constructor?.name !== "PausedError") log.error("市場調査", "引退垢一覧の読み込み中にエラーが起きました", { error: String(e.message || e) });
     return { skipped: "error" };
   }
 
@@ -56,12 +56,15 @@ export async function pollMarket(store, fetcher, log, now = Date.now(), { verify
   log.debug("市場調査", `判定の対象: 全${items.length}件のうち、販売中・注目アカウント以外・更新日時あり ${regular.length}件(うち0〜${PRICE_MAX}円 ${regular.filter(inRangeF).length}件)`);
 
   // ライバルの数: 新しく先頭に来た(新規出品・更新)商品を、更新時刻の1時間ごとに数える
+  // 初回や、前回から長く空いた後は、観測前から並んでいた出品が混ざるので数えない(覚えるだけ)
+  const fresh = !!(m.prevAt && now - m.prevAt < MAX_GAP_MS);
+  if (!fresh) log.info("市場調査", "初回(または前回から時間が空いた)ため、今並んでいる出品はライバルとして数えず、記憶だけします。次回から新しく出てきた出品を数えます");
   for (const x of regular) {
     if (!inRange(x)) continue;
     const key = x.id + "@" + x.t;
     if (m.seen[key]) continue;
     m.seen[key] = now;
-    if (now - x.t < 3 * 3600e3) { m.supply[cellOf(x.t)]++; report.listed++; newIds.push(x.id); const ck = cellName(x.t); cellAdd[ck] = (cellAdd[ck] || 0) + 1; }
+    if (fresh && now - x.t < 3 * 3600e3) { m.supply[cellOf(x.t)]++; report.listed++; newIds.push(x.id); const ck = cellName(x.t); cellAdd[ck] = (cellAdd[ck] || 0) + 1; }
   }
   if (newIds.length) log.debug("市場調査", `新しく見つけた出品(ライバル)${newIds.length}件を記録: ${newIds.slice(0, 30).join(", ")}${newIds.length > 30 ? " ほか" : ""}`, { 時間帯別の加算: cellAdd });
   else log.debug("市場調査", "前回から新しく増えた対象価格帯の出品はありませんでした");
@@ -103,7 +106,7 @@ export async function pollMarket(store, fetcher, log, now = Date.now(), { verify
         m.events.push({ id: v.id, at: v.est, price: v.price });
         m.sales[cellOf(v.est)]++;
         report.sold++;
-        log.info("市場調査", `X全体: 商品${v.id}(${v.price.toLocaleString()}円)が売れました(推定 ${hm(v.est)})`, { id: v.id, price: v.price });
+        log.info("市場調査", `引退垢: 商品${v.id}(${v.price.toLocaleString()}円)が売れました(推定 ${hm(v.est)})`, { id: v.id, price: v.price });
       } else if (st === "unknown" && v.tries < 2) {
         v.tries++; m.verify.push(v);
       } else {
@@ -142,7 +145,7 @@ export async function verifyMarket(store, fetcher, log, max = 2, now = Date.now(
         m.events.push({ id: v.id, at: v.est, price: v.price });
         m.sales[cellOf(v.est)]++;
         sold++;
-        log.info("市場調査", `X全体: 商品${v.id}(${v.price.toLocaleString()}円)が売れました(推定 ${hm(v.est)})`, { id: v.id, price: v.price });
+        log.info("市場調査", `引退垢: 商品${v.id}(${v.price.toLocaleString()}円)が売れました(推定 ${hm(v.est)})`, { id: v.id, price: v.price });
       } else if (st === "unknown" && v.tries < 2) {
         v.tries++; m.verify.push(v);
       } else {

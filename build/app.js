@@ -145,7 +145,7 @@ function renderHome() {
         <span>${s.paused ? "停止中 — 自動出品はされません" : "稼働中 — 予定時刻に自動出品します"}</span>
       </label>
       <dl class="dl">
-        <dt>出品モード</dt><dd>${({ even: "①均等", own: "②自分データ", market: "③X全体データ" })[s.optimizeMode || "even"]}</dd>
+        <dt>出品モード</dt><dd>${({ even: "①均等", own: "②自分データ", market: "③引退垢全体データ" })[s.optimizeMode || "even"]}</dd>
         <dt>今日の出品</dt><dd>${state.today.count} / ${s.dailyLimit} 回</dd>
         <dt>次に出す下書き</dt><dd>${nextDraft ? esc(nextDraft.label) : "<span class='muted'>なし</span>"}</dd>
         <dt>ログイン状態</dt><dd>${state.session.set ? "<span class='pill ok'>登録済み</span>" : "<span class='pill off'>未登録</span>"}</dd>
@@ -279,7 +279,7 @@ function bindDrag() {
 const MODE_INFO = {
   even: { no: "①", name: "均等に出品", desc: "24時間に15枠を均等に置きます(約96分おき)。偏りのないデータを集めるための基本モードです。最初はこれで始めてください。" },
   own: { no: "②", name: "自分のデータで最適化", desc: "①で集めた自分の売れ行きから、売れやすい時間帯に寄せます。データが少ないうちは均等のまま。最適化後も一部の枠は未知の時間帯に回し続け、見落としを防ぎます。" },
-  market: { no: "③", name: "X全体のデータで最適化", desc: "ゲームクラブのX出品全体(0〜5,000円)の売れた時刻から、買い手が多くライバルが少ない時間帯に寄せます。全曜日を2周(約2週間)観測するまでは均等のままです。" },
+  market: { no: "③", name: "引退垢全体のデータで最適化", desc: "ゲームクラブのX「引退垢」出品全体(0〜5,000円)の売れた時刻から、買い手が多くライバルが少ない時間帯に寄せます。全曜日を2周(約2週間)観測するまでは均等のままです。" },
 };
 let analysisData = null;
 async function loadAnalysis() { analysisData = await api("/analysis"); }
@@ -353,7 +353,7 @@ function renderAnalysis() {
   if (!analysisData) { $("#tab-analysis").innerHTML = "<div class='card'><div class='center'>分析データを読み込み中…</div></div>"; loadAnalysis().then(render).catch((e) => toast(e.message, true)); return; }
   const a = analysisData;
   $("#tab-analysis").innerHTML = `
-    <div class="seg"><button data-v="own" class="${anView === "own" ? "on" : ""}">② 自分のデータ</button><button data-v="market" class="${anView === "market" ? "on" : ""}">③ X全体のデータ</button></div>
+    <div class="seg"><button data-v="own" class="${anView === "own" ? "on" : ""}">② 自分のデータ</button><button data-v="market" class="${anView === "market" ? "on" : ""}">③ 引退垢全体のデータ</button></div>
     <div id="an-body"></div>
     <div class="card">
       <h2>今すぐ確認</h2>
@@ -448,10 +448,10 @@ function renderMarketView(a) {
   const arr = metric === "supply" ? supply.map((v) => (v === null ? null : -v)) : conf[0];
   const ranking = arr.map((v, i) => ({ v, i })).filter((x) => x.v !== null && hrs[x.i] >= 0.5).sort((p, q) => q.v - p.v).slice(0, 10)
     .map((x) => ({ name: cellName(x.i), text: metric === "demand" ? `1時間あたり${demand[x.i].toFixed(2)}件` : metric === "supply" ? `ライバル${supply[x.i].toFixed(1)}件/時(少ない)` : `スコア${Math.round(score[x.i] * 100)}(需要${demand[x.i].toFixed(2)}・ライバル${supply[x.i].toFixed(1)})` }));
-  const note = { demand: "マスの数字=1時間あたりに売れたX出品の件数(0〜5,000円)。観測時間で割っているので、見ていた時間の長さに左右されません。", supply: "マスの数字=1時間あたりの新規出品・更新の件数(ライバルの多さ)。少ないほど自分の出品が目立ちます。", score: "マスの数字=狙い目スコア(0〜100)。買われやすさ(7割)とライバルの少なさ(3割)を合わせたもので、③のスケジュールはこれを使います。" }[metric];
+  const note = { demand: "マスの数字=1時間あたりに売れた引退垢の件数(0〜5,000円)。観測時間で割っているので、見ていた時間の長さに左右されません。", supply: "マスの数字=1時間あたりの新規出品・更新の件数(ライバルの多さ)。少ないほど自分の出品が目立ちます。", score: "マスの数字=狙い目スコア(0〜100)。買われやすさ(7割)とライバルの少なさ(3割)を合わせたもので、③のスケジュールはこれを使います。" }[metric];
   $("#an-body").innerHTML = `
     <div class="card">
-      <h2>概要 <span class="q">X(Twitter)・0〜5,000円・注目アカウント除外</span></h2>
+      <h2>概要 <span class="q">X(Twitter)の引退垢・0〜5,000円・注目アカウント除外</span></h2>
       <dl class="dl">
         <dt>観測開始</dt><dd>${m.firstAt ? fmtDate(m.firstAt) : "まだ"}</dd>
         <dt>観測した日数 / 時間</dt><dd>${m.days} 日 / ${m.obsHours.toFixed(1)} 時間</dd>
@@ -470,7 +470,7 @@ function renderMarketView(a) {
       ${grid(conf[0], conf[1], { fmt: conf[2], hue: conf[3], id: "gm" })}
     </div>
     <div class="card"><h2>${metric === "demand" ? "よく売れる曜日×時間 上位10" : metric === "supply" ? "ライバルが少ない曜日×時間 上位10" : "狙い目の曜日×時間 上位10"}</h2>${rankList(ranking, "30分以上観測したマスがたまると表示されます")}</div>
-    <div class="card"><h2>最近売れたX出品</h2>${m.recent.length ? m.recent.map((e) => `<div class="log"><span class="t">${fmtDate(e.at)}</span><span class="m">商品${e.id}</span><span class="t">${Number(e.price).toLocaleString()}円</span></div>`).join("") : "<div class='center'>まだ検知していません</div>"}</div>
+    <div class="card"><h2>最近売れた引退垢</h2>${m.recent.length ? m.recent.map((e) => `<div class="log"><span class="t">${fmtDate(e.at)}</span><span class="m">商品${e.id}</span><span class="t">${Number(e.price).toLocaleString()}円</span></div>`).join("") : "<div class='center'>まだ検知していません</div>"}</div>
     <div class="card"><h2>このデータから作ったスケジュール(③)</h2><div class="slots">${a.recommend.market.map((t) => `<span class="slot">${t}</span>`).join("")}</div>
       <div class="muted" style="margin-top:8px">${r.level === "low" ? "データ不足のため、③を選んでも当面は均等出品になります。" : "時間タブで③を選ぶと、このスケジュールが使われます。"}</div></div>`;
   $$("[data-m]").forEach((b) => (b.onclick = () => { anMetric.market = b.dataset.m; renderAnalysis(); }));
@@ -613,7 +613,7 @@ function renderSettings() {
     </div>
     <div class="card">
       <h2>出品モード</h2>
-      <div class="muted">出品モード(①均等 / ②自分データ / ③X全体データ)の切り替えは「時間」タブに移動しました。</div>
+      <div class="muted">出品モード(①均等 / ②自分データ / ③引退垢全体データ)の切り替えは「時間」タブに移動しました。</div>
     </div>
   `;
   $("#st_sessSave").onclick = async () => { const v = $("#st_sess").value.trim(); if (!v) return toast("値を入力してください", true); try { await api("/session", { method: "POST", body: JSON.stringify({ phpsessid: v }) }); toast("保存しました"); $("#st_sess").value = ""; refresh(); } catch (e) { toast(e.message, true); } };

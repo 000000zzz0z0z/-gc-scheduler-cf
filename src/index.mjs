@@ -208,7 +208,7 @@ async function handleApi(request, env, path) {
       const log = createLogger("manual");
       const s = mergeSettings(await load(env, "settings"), { optimizeMode: body.mode });
       await save(env, "settings", s);
-      const label = { even: "①均等", own: "②自分データ", market: "③X全体データ" }[s.optimizeMode];
+      const label = { even: "①均等", own: "②自分データ", market: "③引退垢全体データ" }[s.optimizeMode];
       log.info("管理画面", `出品モードを「${label}」に変更しました`);
       const r = await rebuildSchedule(env, s, log);
       await log.flush(db(env));

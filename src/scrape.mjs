@@ -91,8 +91,10 @@ export function parseMarketHtml(htmlText) {
   return items;
 }
 export async function fetchMarketPage(page, fetcher) {
-  const url = page > 1 ? `/twitter?page=${page}` : "/twitter";
-  const res = await gcFetch(url, null, { headers: { Accept: "text/html" } }, fetcher, { cat: "市場調査", what: `X一覧 ${page}ページ目を確認` });
+  // 引退垢(アカウント種別10)だけに絞った一覧。[ ] はURL用に変換して送る
+  const base = "/twitter?search%5BaccountType%5D=10";
+  const url = page > 1 ? `${base}&page=${page}` : base;
+  const res = await gcFetch(url, null, { headers: { Accept: "text/html" } }, fetcher, { cat: "市場調査", what: `引退垢一覧 ${page}ページ目を確認` });
   if (res.status !== 200) return { ok: false, status: res.status, items: [] };
   const h = await res.text();
   const t0 = Date.now();

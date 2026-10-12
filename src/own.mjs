@@ -10,6 +10,8 @@ import { jstParts } from "./gc.mjs";
 // 「支払いが済んだ(=売れた)」とみなす状態。支払い待ちは含めない
 const SOLD = new Set(["支払完了", "商品お渡し", "受取評価待ち", "完了", "キャンセル申請"]);
 const CANCEL = new Set(["キャンセル", "未払キャンセル"]);
+// 購入ボタンは押されたが、まだ入金されていない状態
+const PENDING = new Set(["支払待ち", "支払い待ち", "支払確認中", "支払い確認中"]);
 export const PENDING_MS = 48 * 3600e3; // 出品から48時間は「結果待ち」
 const KEEP_MS = 120 * 86400e3;
 const CHATS_PER_SCAN = 2;
@@ -42,19 +44,32 @@ export async function scanOwn(store, session, fetcher, log, now = Date.now()) {
     const by = {}; r.items.forEach((x) => (by[x.status || "(なし)"] = (by[x.status || "(なし)"] || 0) + 1));
     log.debug("売れ行き", `${label}: ${r.items.length}件を読み取り(データ${Math.round((r.bytes || 0) / 1024)}KB・読み取り${r.parseMs ?? "?"}ms・全${r.maxPage || 1}ページ)`, { 状態の内訳: by });
   };
+  const snap = {}; // 今回見えた全商品: id -> {状態, カテゴリ, タブ}
+  const listAll = (label, tabKey, r) => {
+    const rows = r.items.map((x) => { snap[x.productId] = { st: x.status, cat: x.category, tab: tabKey, chat: x.chatId }; return `${x.productId}(${x.category === TARGET_CATEGORY ? "X" : x.category}・${x.status || "状態なし"}${x.unread ? "・未読あり" : ""}${own.records[x.productId] ? "・ツールの出品" : ""})`; });
+    log.debug("売れ行き", `${label}に並んでいる全商品: ${rows.join(" / ") || "なし"}`);
+  };
   const handle = (it) => {
     if (it.category !== TARGET_CATEGORY) { ignored.cat++; return; }
     const r = own.records[it.productId];
     if (!r) { ignored.notTool++; return; } // ツールが出品したもの以外は無視
     log.debug("売れ行き", `ツールの出品を発見: 商品${it.productId}「${r.lb}」状態「${it.status}」(記録: ${r.sold ? (r.x ? "売れた・販売日時確定" : "売れた・仮の時刻") : "未販売"})`, { productId: it.productId, status: it.status, chatId: it.chatId, unread: it.unread });
+    if (PENDING.has(it.status) && !r.sold && !r.pw) {
+      // 購入ボタンが押された(入金待ち)。この発見時刻を「購入時刻の目安」として残す
+      r.pw = now;
+      log.info("売れ行き", `購入されました(入金待ち): 商品${it.productId}「${r.lb}」。入金が確認できたら「売れた」として記録します(購入時刻の目安: ${fmt(now)}・正確な時刻は後で販売日時から取得)`, { productId: it.productId, status: it.status });
+    }
     if (SOLD.has(it.status) && !r.sold) {
-      r.sold = true; r.s = now; r.x = false;
+      // 売れた時刻 = 購入ボタンが押された時刻。正確な値(販売日時)は後でチャットの取引情報から取る。
+      // それまでの仮の値は、入金待ちを最初に見つけた時刻(なければ今回の発見時刻)
+      r.sold = true; r.s = r.pw || now; r.x = false;
       report.sold++;
-      log.info("売れ行き", `売れました: 商品${it.productId}「${r.lb}」(出品 ${fmt(r.l)})。販売時刻はいったん発見時刻 ${fmt(now)} で記録し、あとで販売日時に補正します`, { productId: it.productId, status: it.status });
-    } else if (CANCEL.has(it.status) && r.sold) {
-      r.sold = false; r.s = null; r.x = false;
+      log.info("売れ行き", `売れました(入金確認): 商品${it.productId}「${r.lb}」(出品 ${fmt(r.l)})。販売時刻は仮に ${fmt(r.s)}(${r.pw ? "入金待ちを見つけた時刻" : "今回の発見時刻"})で記録し、あとで販売日時(購入ボタンが押された時刻)に補正します`, { productId: it.productId, status: it.status });
+    } else if (CANCEL.has(it.status) && (r.sold || r.pw)) {
+      const was = r.sold ? "売れた" : "入金待ち";
+      r.sold = false; r.s = null; r.x = false; r.pw = null;
       report.canceled++;
-      log.warn("売れ行き", `取引がキャンセルされたため「売れた」記録を取り消しました: 商品${it.productId}`, { productId: it.productId, status: it.status });
+      log.warn("売れ行き", `取引が「${it.status}」になったため、「${was}」の記録を取り消しました: 商品${it.productId}`, { productId: it.productId, status: it.status });
     }
     if (r.sold && !r.x && it.chatId) {
       if (it.unread) { r.wait = true; log.debug("売れ行き", `商品${it.productId}: チャットに未読があるため開きません(既読を付けないため)。読んだ後に販売日時を取りに行きます`, { chatId: it.chatId }); }
@@ -69,11 +84,31 @@ export async function scanOwn(store, session, fetcher, log, now = Date.now()) {
       return { skipped: tr.status };
     }
     summarize("取引中 1ページ目", tr);
+    listAll("取引中 1ページ目", "取引中", tr);
     tr.items.forEach(handle);
-    for (let p = 2; p <= Math.min(tr.maxPage, 3); p++) { const rp = await fetchPage(session, "trading", p, fetcher); summarize(`取引中 ${p}ページ目`, rp); rp.items.forEach(handle); }
+    for (let p = 2; p <= Math.min(tr.maxPage, 3); p++) { const rp = await fetchPage(session, "trading", p, fetcher); summarize(`取引中 ${p}ページ目`, rp); listAll(`取引中 ${p}ページ目`, "取引中", rp); rp.items.forEach(handle); }
     const cp = await fetchPage(session, "completed", 1, fetcher);
     summarize("完了・キャンセル 1ページ目", cp);
+    listAll("完了・キャンセル 1ページ目", "完了", cp);
     cp.items.forEach(handle);
+    const prev = own.snap || null;
+    if (prev) {
+      const changes = [];
+      for (const [id, v] of Object.entries(snap)) {
+        const p0 = prev[id];
+        const name = `商品${id}(${v.cat === TARGET_CATEGORY ? "X" : v.cat})`;
+        if (!p0) changes.push(`${name}が「${v.tab}」に新しく現れました(状態: ${v.st})`);
+        else if (p0.tab !== v.tab) changes.push(`${name}が「${p0.tab}」から「${v.tab}」へ移りました(状態: ${p0.st} → ${v.st})`);
+        else if (p0.st !== v.st) changes.push(`${name}の状態が変わりました: ${p0.st} → ${v.st}`);
+      }
+      for (const [id, p0] of Object.entries(prev)) {
+        if (!snap[id] && p0.tab === "取引中") changes.push(`商品${id}(${p0.cat === TARGET_CATEGORY ? "X" : p0.cat})が「取引中」から見えなくなりました(直前の状態: ${p0.st})。完了タブの1ページ目にもありません`);
+      }
+      if (changes.length) changes.forEach((c) => log.info("売れ行き", `【変化】${c}`));
+      else log.debug("売れ行き", "前回の確認から、取引中・完了タブに変化はありませんでした");
+    } else log.debug("売れ行き", "初回のため、次回からタブの中身の変化を記録します");
+    // 「見えなくなった」の判定は取引中タブの商品だけ(完了タブは1ページ目しか見ないため、押し出された古い商品は対象外)
+    own.snap = snap;
     log.debug("売れ行き", `対象外として無視: 他カテゴリ(にゃんこ大戦争など)${ignored.cat}件・ツール以外の出品${ignored.notTool}件`, ignored);
 
     // 未読のない取引だけ、販売日時を取りに行く
