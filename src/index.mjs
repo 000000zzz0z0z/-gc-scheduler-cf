@@ -83,10 +83,10 @@ async function handleApi(request, env, path) {
   try {
     if (method === "GET" && sub[0] === "state" && sub.length === 1) {
       const { netStatus } = await import("./net.mjs");
-      const [settings, secret, drafts, state, lastTick, net] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "drafts"), load(env, "state"), db(env).get("lastTick"), netStatus(db(env))]);
+      const [settings, secret, drafts, state, lastTick, net, force] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "drafts"), load(env, "state"), db(env).get("lastTick"), netStatus(db(env)), db(env).getMany(["forcePublish", "forceResult"])]);
       const now = Date.now();
       const idx = nextDraftIndex(drafts, state.pointer);
-      return json({ now, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick, net });
+      return json({ now, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick, net, force: { pending: force.forcePublish || null, result: force.forceResult || null } });
     }
     if (method === "GET" && sub[0] === "logs" && sub.length === 1) return json({ logs: await loadLogs(env, 3000) });
 
@@ -144,18 +144,42 @@ async function handleApi(request, env, path) {
           gc = { status: r.status, ray, colo: ray.split("-").pop() || "", challenge, ms: Date.now() - t0 };
         } catch (e) { gc = { error: e.message }; }
         const ok = gc.status === 200 && !gc.challenge;
-        const inJp = JP.includes(gc.colo) || JP.includes(where.colo) || where.loc === "JP";
+        // 判定は「ゲームクラブに届いた通信の出どころ拠点」(cf-rayの末尾)だけで行う。
+        // ※trace の loc(国)は、画面から押したときはあなたの国(JP)が引き継がれることがあり、当てにならない
+        const inJp = JP.includes(gc.colo);
         results.push({ name, where, gc, ok, inJp });
         await adminLog(env, `通信の出どころテスト[${name === "main" ? "データ本体" : "中継専用"}]: 拠点=${where.colo || "不明"}(${where.loc || "?"}) / ゲームクラブ=${gc.error ? "通信エラー" : `応答${gc.status}${gc.challenge ? "・確認画面" : ""}`}(出どころ ${gc.colo || "?"})`, { colo: where.colo, loc: where.loc, status: gc.status, cfRay: gc.ray });
       }
       const prev = (await main.get("net:relay")) || "main";
-      const best = results.find((x) => x.ok && x.inJp) || null;
+      // 中継専用(アジア指定)を優先し、だめならデータ本体
+      const best = results.find((x) => x.name === "relay-jp" && x.ok && x.inJp) || results.find((x) => x.ok && x.inJp) || null;
       const chosen = best ? best.name : prev;
       if (best && chosen !== prev) await main.put("net:relay", chosen);
       // 日本から通れると確かめられたので、海外から止められて入っていた休止は解除する
       if (best && ((await main.get("net:pauseUntil")) || 0) > Date.now()) { await main.put("net:pauseUntil", 0); await adminLog(env, "日本から通れることを確認したため、通信の休止を解除しました"); }
       await adminLog(env, best ? `以後のゲームクラブへの通信は「${chosen === "main" ? "データ本体の保存領域" : "中継専用の保存領域"}」(${best.gc.colo})から出します` : `日本から通れる保存領域が見つからなかったため、通信の出どころは変更しません(現在: ${prev})`);
       return json({ ok: !!best, chosen, changed: !!best && chosen !== prev, results });
+    }
+    // ===== 今すぐ自動出品(予約) =====
+    // 画面から直接出品すると「あなたの国」が引き継がれて本番と条件が変わるため、
+    // 次の自動実行(1分以内)に出品を予約し、本番と同じ経路で出品する。
+    if (method === "POST" && sub[0] === "autopublish") {
+      const st = db(env);
+      const [settings, secret, drafts, state, g] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "drafts"), load(env, "state"), st.getMany(["lock:last", "net:pauseUntil", "forcePublish"])]);
+      const now = Date.now();
+      const no = (m) => json({ ok: false, message: m });
+      if (settings.paused) return no("停止中です。ホームのスイッチをオンにしてから押してください。");
+      if (!secret.phpsessid) return no("ログイン情報(PHPSESSID)が未登録です。");
+      if (nextDraftIndex(drafts, state.pointer) < 0) return no("出品できる下書きがありません。");
+      const day = state.days[dayKey(now)] || { count: 0 };
+      if (day.count >= settings.dailyLimit) return no(`今日の上限(${settings.dailyLimit}回)に達しています。`);
+      const gap = (settings.minIntervalMin ?? 30) * 60e3, left = gap - (now - (g["lock:last"] || 0));
+      if (left > 0) return no(`前回の出品から${settings.minIntervalMin ?? 30}分たっていません(あと約${Math.ceil(left / 60e3)}分)。`);
+      if ((g["net:pauseUntil"] || 0) > now) return no(`ゲームクラブへの通信を休止中です(あと約${Math.ceil((g["net:pauseUntil"] - now) / 60e3)}分)。設定タブの「通信の出どころテスト」で日本から通れると確認できれば、休止は解除されます。`);
+      if (g.forcePublish) return no("すでに予約済みです。1分以内に出品されます。");
+      await st.put("forcePublish", { at: now });
+      await adminLog(env, "「今すぐ自動出品」を予約しました(次の自動実行で出品します)");
+      return json({ ok: true, at: now });
     }
     if (method === "POST" && sub[0] === "publish") return json(await publishNext(env, { draftKey: body.key || null, manual: true }));
     if (method === "POST" && sub[0] === "alert" && sub[1] === "clear") { const state = await load(env, "state"); state.alert = null; await save(env, "state", state); return json({ ok: true }); }

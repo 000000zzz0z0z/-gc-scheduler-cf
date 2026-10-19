@@ -123,8 +123,8 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
   const pubFetcher = createFetcher(store, ownLog, { gap: false }); // 出品は単発なので間隔待ち不要
   const result = await publishDraft(draft, secret.phpsessid, { now, fetcher: pubFetcher });
   await pubFetcher.finish();
-  if (result.ok) ownLog.info("出品", `出品に成功しました: 「${draft.label}」→ 出品番号 ${result.listingId}`, { listingId: result.listingId, url: result.url, status: result.status });
-  else ownLog.error("出品", `出品に失敗しました: 「${draft.label}」${result.message}`, { kind: result.kind, status: result.status });
+  if (result.ok) ownLog.info("出品", `出品に成功しました: 「${draft.label}」→ 出品番号 ${result.listingId}(通信の出どころ ${result.colo || "不明"})`, { listingId: result.listingId, url: result.url, status: result.status, colo: result.colo });
+  else ownLog.error("出品", `出品に失敗しました: 「${draft.label}」${result.message}`, { kind: result.kind, status: result.status, colo: result.colo });
   if (!result.ok && SAFE_TO_RELEASE.includes(result.kind)) { await store.release(lock.prev); ownLog.debug("出品", "ゲームクラブに出品は作られていないため、ロックを戻しました(すぐ再挑戦できます)"); }
   else if (!result.ok) ownLog.debug("出品", "出品が作られた可能性を否定できないため、ロックは戻しません(30分後に再挑戦)");
 
@@ -223,7 +223,7 @@ export async function tick(env, now = Date.now()) {
   try {
     const [state, secret, ts] = await Promise.all([
       load(env, "state"), load(env, "secret"),
-      store.getMany ? store.getMany(["lastOwnScan", "lock:last", "lastOptimize"]) : Promise.resolve({}),
+      store.getMany ? store.getMany(["lastOwnScan", "lock:last", "lastOptimize", "forcePublish"]) : Promise.resolve({}),
     ]);
     const slots = computeSlots(settings.schedule, settings.dailyLimit);
     const dk = dayKey(now);
@@ -241,6 +241,24 @@ export async function tick(env, now = Date.now()) {
       "30分ルール": lockLeft ? `あと${Math.ceil(lockLeft / 60e3)}分は出品できない` : "出品できる",
       売れ行き確認: agoMin(now, ts.lastOwnScan), ログイン情報: secret.phpsessid ? "登録済み" : "未登録",
     });
+
+    // --- 0) 画面から予約された「今すぐ自動出品」(本番と同じ経路で、この自動実行の中で出品する) ---
+    const fp = ts.forcePublish;
+    if (fp && now - (fp.at || 0) > 10 * 60e3) {
+      await store.put("forcePublish", null);
+      await store.put("forceResult", { at: now, reservedAt: fp.at, ok: false, message: "予約から10分たっても出品できる状態にならなかったため、予約を取り消しました。" });
+      log.warn("出品", "「今すぐ自動出品」の予約が10分たっても実行できなかったため、取り消しました");
+    } else if (fp && lockLeft === 0) {
+      await store.put("forcePublish", null);
+      log.info("定期実行", `${nowLabel} 判断: 画面から予約された「今すぐ自動出品」を実行します(予定枠とは別の1回)`);
+      const r = await publishNext(env, { now, log });
+      out.publish = r;
+      await store.put("forceResult", { at: now, reservedAt: fp.at, ok: !!r.ok, listingId: r.listingId || null, colo: r.colo || null, message: r.ok ? null : r.message, label: r.label || null });
+      await log.flush(store);
+      log.debug("定期実行", `${nowLabel} の定期実行を終了(合計所要${Date.now() - T0}ms)`);
+      await log.flush(store);
+      return out;
+    }
 
     // --- 1) 予定枠の出品 ---
     let due = null, changed = false;

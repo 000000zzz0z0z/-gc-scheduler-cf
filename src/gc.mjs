@@ -174,14 +174,16 @@ export async function publishDraft(draft, session, { now = Date.now(), fetcher =
     if (e && e.constructor && e.constructor.name === "PausedError") return { ok: false, kind: "paused", message: e.message };
     return { ok: false, kind: "network", message: `通信できませんでした(${e.message})` };
   }
-  const r = await readRes(res);
-  if (r.kind === "blocked") return { ok: false, kind: "blocked", status: r.status, message: "Cloudflareにアクセスを拒否されました。サーバーからの自動出品はできない可能性があります。" };
-  if (r.kind === "session") return { ok: false, kind: "session", status: r.status, message: "ログイン状態が切れています。設定からPHPSESSIDを貼り直してください。" };
+  const r0 = await readRes(res);
+  const colo = (res.headers.get("cf-ray") || "").split("-").pop() || "";
+  const r = { ...r0, colo };
+  if (r.kind === "blocked") return { ok: false, kind: "blocked", status: r.status, colo, message: `Cloudflareにアクセスを拒否されました(確認画面・通信の出どころ ${colo || "不明"})。` };
+  if (r.kind === "session") return { ok: false, kind: "session", status: r.status, colo, message: "ログイン状態が切れています。設定からPHPSESSIDを貼り直してください。" };
   let json = null;
   try { json = JSON.parse(r.text); } catch {}
   if (res.status === 200 && json && typeof json.location === "string" && /complete=1/.test(json.location)) {
     const m = json.location.match(/\/([A-Za-z0-9_-]+)\/(\d+)\?complete/);
-    return { ok: true, status: 200, listingId: m ? m[2] : null, url: json.location.replace(/\?complete=1.*$/, "") };
+    return { ok: true, status: 200, colo, listingId: m ? m[2] : null, url: json.location.replace(/\?complete=1.*$/, "") };
   }
   if (json && typeof json.location === "string" && /login/i.test(json.location)) {
     return { ok: false, kind: "session", status: r.status, message: "ログイン状態が切れています。設定からPHPSESSIDを貼り直してください。" };

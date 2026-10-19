@@ -297,3 +297,26 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
 @keyframes opglowp{0%{box-shadow:0 0 0 1px rgba(255,45,149,.95),0 0 20px rgba(255,45,149,.6);background:rgba(255,45,149,.2)}100%{box-shadow:none}}
 .netbar b.tick{display:inline-block;transition:color .3s}
 @media (prefers-reduced-motion:reduce){.op.enter{opacity:1;transform:none;max-height:none;margin:4px 0;padding:7px 9px}}
+
+/* ===== 今すぐ自動出品 ===== */
+.fp{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+.fp-note{font-size:12px;margin:8px 0 0}
+.fp-st{margin-top:10px;padding:9px 12px;border-radius:10px;font-size:13px;border:1px solid var(--line);background:rgba(5,7,12,.45)}
+.fp-st.ok{color:var(--green);border-color:rgba(57,255,139,.45)}
+.fp-st.ng{color:#ff8fb8;border-color:rgba(255,45,149,.5)}
+.fp-st.wait{color:var(--cyan)}
+.spin{display:inline-block;width:11px;height:11px;margin-right:8px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin 1s linear infinite;vertical-align:-1px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ===== ログの見やすさ ===== */
+.presets{display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;margin-bottom:8px}
+.presets .muted{font-size:12px;margin-right:2px}
+.presets .btn.on{border-color:var(--green);color:var(--green);box-shadow:0 0 10px rgba(57,255,139,.35)}
+.bd{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--mut);white-space:nowrap;font-variant-numeric:tabular-nums}
+.bd.ok{color:var(--green);border-color:rgba(57,255,139,.45)}
+.bd.ng{color:#ff8fb8;border-color:rgba(255,45,149,.55)}
+.bd.jp{color:var(--cyan);border-color:rgba(56,245,230,.45)}
+.bd.ab{color:#ffd23c;border-color:rgba(255,210,60,.45)}
+.op.sep{margin-top:12px;position:relative}
+.op.sep::before{content:"";position:absolute;left:-3px;right:0;top:-7px;border-top:1px dashed rgba(127,166,160,.25)}
+.op-t{font-variant-numeric:tabular-nums}
