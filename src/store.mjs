@@ -52,6 +52,9 @@ export class GcStore extends DurableObject {
     if (c.day !== jstDay(now)) c = { day: jstDay(now), n: 0 };
     this.broadcast({ t: "net", net: { pauseUntil: pauseUntil > now ? pauseUntil : 0, today: c.n, cap: 2500 } });
   }
+  async del(keys) {
+    await this.ctx.storage.delete(Array.isArray(keys) ? keys : [keys]);
+  }
   // 出品の権利を取る。前回から gapMs 経っていなければ断る(判定と記録は割り込まれない)
   async claim(now, gapMs) {
     const last = (await this.ctx.storage.get("lock:last")) || 0;

@@ -12,7 +12,7 @@ import { jstParts } from "./gc.mjs";
 
 const DAY = 1440;
 
-// 均等 n 枠(モード①)。start/end と回数から等間隔に。
+// 均等 n 枠。データが少ないうちの出品時刻に使う。
 export function evenSlots(count = 15) {
   const step = DAY / count;
   const out = [];
@@ -53,7 +53,7 @@ function weekdayResolution(totalSamples) {
   return totalSamples >= 400; // これ未満は曜日をまたいで平均(全曜日同じスケジュール)
 }
 
-// --- モード②: 自分の売れ行きデータから ---
+// --- 自分の売れ行きデータから ---
 // stats: ownStats() の戻り。cells[168] = {n, sold, hours[]}, buy[168], days, eligible, sold48
 export function recommendFromOwn(stats, { count = 15, now = Date.now() } = {}) {
   const totalN = stats.eligible || 0;
@@ -93,28 +93,6 @@ export function recommendFromOwn(stats, { count = 15, now = Date.now() } = {}) {
   return pickSlots(score, hourSamp, { count, explore });
 }
 
-// --- モード③: X全体の市場データから ---
-// mstats: marketStats() の戻り。sales[168], supply[168], obs[168](分)
-export function recommendFromMarket(mstats, { count = 15, now = Date.now() } = {}) {
-  const salesHour = new Array(24).fill(0), obsHour = new Array(24).fill(0), supplyHour = new Array(24).fill(0);
-  for (let i = 0; i < 168; i++) { salesHour[i % 24] += mstats.sales[i]; obsHour[i % 24] += mstats.obs[i]; supplyHour[i % 24] += mstats.supply[i]; }
-
-  // 売れた件数を観測時間で割って「1時間あたりの売れやすさ」に正規化(観測が偏っても公平)
-  const demand = new Array(24).fill(0);
-  for (let h = 0; h < 24; h++) { const hours = Math.max(0.1, obsHour[h] / 60); demand[h] = salesHour[h] / hours; }
-
-  // ライバル(供給)が少ないほど良い。需要÷供給で「出すと目立って売れやすい時間」を測る
-  const supplyRate = new Array(24).fill(0);
-  for (let h = 0; h < 24; h++) { const hours = Math.max(0.1, obsHour[h] / 60); supplyRate[h] = supplyHour[h] / hours; }
-  const nd = norm(demand), ns = norm(supplyRate);
-  const score = nd.map((d, h) => 0.7 * d + 0.3 * (1 - ns[h])); // 需要重視、供給は控えめに割引
-
-  const samples = obsHour.map((x) => x); // 観測時間の少ない時間帯=未知
-  const total = mstats.totalSales || 0;
-  const explore = total < 150 ? 4 : total < 500 ? 2 : 1;
-  return pickSlots(score, samples, { count, explore });
-}
-
 function norm(arr) {
   const mx = Math.max(...arr), mn = Math.min(...arr);
   return arr.map((x) => (mx > mn ? (x - mn) / (mx - mn) : 0.5));
@@ -124,17 +102,10 @@ function normMix(a, b, wa) {
   return na.map((x, i) => wa * x + (1 - wa) * nb[i]);
 }
 
-// データ量から「どのモードがどれだけ信頼できるか」を返す
-export function readiness(ownStats, marketStats) {
+// 自分のデータ量から、最適化がどれだけ信頼できるかを返す
+export function readiness(ownStats) {
   const own = ownStats.sold48 || 0;
-  const mkt = marketStats.totalSales || 0;
-  const mktDays = marketStats.days || 0;
-  return {
-    own: own < 15 ? { level: "low", note: `自分の売れたデータ ${own}件。あと少し集めると最適化できます(目安20件〜)。` }
-      : own < 50 ? { level: "mid", note: `自分の売れたデータ ${own}件。傾向が見え始めています。` }
-      : { level: "high", note: `自分の売れたデータ ${own}件。十分です。` },
-    market: mktDays < 7 ? { level: "low", note: `市場データ ${mktDays}日分・${mkt}件。全曜日を2周するまで(約2週間)は当てになりません。` }
-      : mkt < 200 ? { level: "mid", note: `市場データ ${mktDays}日分・${mkt}件。参考になり始めています。` }
-      : { level: "high", note: `市場データ ${mktDays}日分・${mkt}件。十分です。` },
-  };
+  return own < 15 ? { level: "low", note: `自分の売れたデータ ${own}件。あと少し集めると最適化できます(目安20件〜)。それまでは均等に出品します。` }
+    : own < 50 ? { level: "mid", note: `自分の売れたデータ ${own}件。傾向が見え始めています。` }
+    : { level: "high", note: `自分の売れたデータ ${own}件。十分です。` };
 }

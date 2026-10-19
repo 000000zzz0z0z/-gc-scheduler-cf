@@ -575,7 +575,7 @@ function renderHome() {
         <span>\${s.paused ? "停止中 — 自動出品はされません" : "稼働中 — 予定時刻に自動出品します"}</span>
       </label>
       <dl class="dl">
-        <dt>出品モード</dt><dd>\${({ even: "①均等", own: "②自分データ", market: "③引退垢全体データ" })[s.optimizeMode || "even"]}</dd>
+        <dt>出品モード</dt><dd>自分の売れ行きで最適化</dd>
         <dt>今日の出品</dt><dd>\${state.today.count} / \${s.dailyLimit} 回</dd>
         <dt>次に出す下書き</dt><dd>\${nextDraft ? esc(nextDraft.label) : "<span class='muted'>なし</span>"}</dd>
         <dt>ログイン状態</dt><dd>\${state.session.set ? "<span class='pill ok'>登録済み</span>" : "<span class='pill off'>未登録</span>"}</dd>
@@ -704,57 +704,38 @@ function bindDrag() {
   });
 }
 
-// ---- 時間設定 ----
-// ---- 時間(出品モード) ----
-const MODE_INFO = {
-  even: { no: "①", name: "均等に出品", desc: "24時間に15枠を均等に置きます(約96分おき)。偏りのないデータを集めるための基本モードです。最初はこれで始めてください。" },
-  own: { no: "②", name: "自分のデータで最適化", desc: "①で集めた自分の売れ行きから、売れやすい時間帯に寄せます。データが少ないうちは均等のまま。最適化後も一部の枠は未知の時間帯に回し続け、見落としを防ぎます。" },
-  market: { no: "③", name: "引退垢全体のデータで最適化", desc: "ゲームクラブのX「引退垢」出品全体(0〜5,000円)の売れた時刻から、買い手が多くライバルが少ない時間帯に寄せます。全曜日を2周(約2週間)観測するまでは均等のままです。" },
-};
+// ---- 時間(自分の売れ行きで最適化) ----
 let analysisData = null;
 async function loadAnalysis() { analysisData = await api("/analysis"); }
 
 function renderSchedule() {
   if (!analysisData) { $("#tab-schedule").innerHTML = "<div class='card'><div class='center'>読み込み中…</div></div>"; loadAnalysis().then(render).catch((e) => toast(e.message, true)); return; }
-  const s = state.settings, mode = s.optimizeMode || "even", a = analysisData;
-  const readyOf = (m) => (m === "own" ? a.ready.own : m === "market" ? a.ready.market : { level: "high", note: "いつでも使えます。" });
+  const r = analysisData.ready;
   const lv = { low: "データ不足", mid: "参考程度", high: "十分" };
-  const cards = ["even", "own", "market"].map((m) => {
-    const info = MODE_INFO[m], r = readyOf(m), on = m === mode;
-    return \`<div class="mode \${on ? "on" : ""}" data-mode="\${m}">
-      <div class="mode-top"><span class="mode-no">\${info.no}</span><span class="mode-name">\${info.name}</span>\${on ? '<span class="pill ok">使用中</span>' : ""}</div>
-      <div class="muted" style="margin:6px 0 8px">\${info.desc}</div>
-      <div class="mode-ready \${r.level}">\${m === "even" ? "準備OK" : "データ: " + lv[r.level]} ・ \${esc(r.note)}</div>
-      \${on ? "" : \`<button class="btn sm" data-pick="\${m}" style="margin-top:10px">このモードにする</button>\`}
-    </div>\`;
-  }).join("");
-  const times = (s.schedule.mode === "manual" ? s.schedule.manual : null) || a.recommend.even;
   $("#tab-schedule").innerHTML = \`
     <div class="card">
       <h2>出品モード</h2>
-      \${cards}
+      <div class="mode on">
+        <div class="mode-top"><span class="mode-name">自分の売れ行きで最適化</span><span class="pill ok">使用中</span></div>
+        <div class="muted" style="margin:6px 0 8px">このツールが出品した商品の売れ行きを記録し、売れやすい時間帯に寄せます。データが少ないうちは24時間に均等に出品します(約96分おき)。最適化後も一部の枠は未知の時間帯に回し続け、見落としを防ぎます。他の人の出品は確認しません。</div>
+        <div class="mode-ready \${r.level}">データ: \${lv[r.level]} ・ \${esc(r.note)}</div>
+      </div>
     </div>
     <div class="card">
       <h2>現在のスケジュール <span class="q">\${state.slots.length}枠</span></h2>
       <div class="slots">\${state.slots.map((m) => \`<span class="slot">\${hm2str(m)}</span>\`).join("")}</div>
-      <div class="muted" style="margin-top:10px">②③のモードでは、毎日0時にデータから作り直します。データが足りない間は自動的に①と同じ均等スケジュールになります。</div>
+      <div class="muted" style="margin-top:10px">毎日0時に、自分の売れ行きデータから作り直します。データが足りない間は均等スケジュールになります。</div>
       <button class="btn" id="sc_rebuild" style="margin-top:12px">今すぐ作り直す</button>
     </div>\`;
-  $$("[data-pick]").forEach((b) => b.onclick = async () => {
-    const m = b.dataset.pick;
-    if (!confirm(\`出品モードを「\${MODE_INFO[m].no} \${MODE_INFO[m].name}」に変更しますか?\\nスケジュールがすぐに作り直されます。\`)) return;
-    try { const r = await api("/mode", { method: "POST", body: JSON.stringify({ mode: m }) }); toast(r.reason && r.reason.endsWith("-low") ? "変更しました(データ不足のため当面は均等です)" : "変更しました"); analysisData = null; refresh(); }
-    catch (e) { toast(e.message, true); }
-  });
   $("#sc_rebuild").onclick = async () => {
-    try { const r = await api("/mode", { method: "POST", body: JSON.stringify({ mode }) }); toast(\`作り直しました(\${r.times.length}枠)\`); analysisData = null; refresh(); }
+    try { const r = await api("/rebuild", { method: "POST", body: "{}" }); toast(r.reason === "own-low" ? \`作り直しました(\${r.times.length}枠・データ不足のため均等)\` : \`作り直しました(\${r.times.length}枠)\`); analysisData = null; refresh(); }
     catch (e) { toast(e.message, true); }
   };
 }
 
 // ---- 分析 ----
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
-let anView = "own", anMetric = { own: "rate", market: "demand" };
+let anMetric = { own: "rate" };
 
 // 168マス(曜日×時間)の表。values[i] は数値 or null(データなし)。color[i] は 0〜1 の濃さ
 function grid(values, color, { fmt = (v) => v, hue = "pink", id = "g" } = {}) {
@@ -783,22 +764,20 @@ function renderAnalysis() {
   if (!analysisData) { $("#tab-analysis").innerHTML = "<div class='card'><div class='center'>分析データを読み込み中…</div></div>"; loadAnalysis().then(render).catch((e) => toast(e.message, true)); return; }
   const a = analysisData;
   $("#tab-analysis").innerHTML = \`
-    <div class="seg"><button data-v="own" class="\${anView === "own" ? "on" : ""}">② 自分のデータ</button><button data-v="market" class="\${anView === "market" ? "on" : ""}">③ 引退垢全体のデータ</button></div>
     <div id="an-body"></div>
     <div class="card">
       <h2>今すぐ確認</h2>
-      <div class="muted" style="margin-bottom:10px">通常は自動(自分の売れ行き10分おき・市場調査15分おき)です。すぐ最新にしたいときに押してください。ゲームクラブに負担をかけないよう、数十秒かかります。</div>
+      <div class="muted" style="margin-bottom:10px">通常は自動(自分の売れ行き10分おき)です。すぐ最新にしたいときに押してください。ゲームクラブに負担をかけないよう、数十秒かかります。</div>
       <button class="btn" id="an_scan">今すぐ確認する</button>
       <div class="muted" id="an_scanMsg" style="margin-top:8px"></div>
     </div>\`;
-  $$(".seg button").forEach((b) => (b.onclick = () => { anView = b.dataset.v; window.Snd && Snd.tabSwitch(); renderAnalysis(); }));
-  if (anView === "own") renderOwnView(a); else renderMarketView(a);
+  renderOwnView(a);
   $("#an_scan").onclick = async (e) => {
     e.target.disabled = true; $("#an_scanMsg").textContent = "確認中…(30〜60秒かかります)";
     try {
       const r = await api("/scan", { method: "POST", body: "{}" });
-      const o = r.own || {}, m = r.market || {};
-      $("#an_scanMsg").textContent = \`完了: 自分=新たに売れた\${o.sold || 0}件・販売日時で補正\${o.exact || 0}件 / 市場=消えた商品\${m.vanished || 0}件・売れた\${m.sold || 0}件\`;
+      const o = r.own || {};
+      $("#an_scanMsg").textContent = \`完了: 新たに売れた\${o.sold || 0}件・販売日時で補正\${o.exact || 0}件\`;
       analysisData = null; await loadAnalysis(); renderAnalysis();
     } catch (err) { $("#an_scanMsg").textContent = err.message; }
     e.target.disabled = false;
@@ -819,7 +798,7 @@ function rankList(items, empty) {
 }
 
 function renderOwnView(a) {
-  const o = a.own, r = a.ready.own;
+  const o = a.own, r = a.ready;
   const lv = { low: "データ不足", mid: "参考程度", high: "十分" };
   const g = o.eligible ? o.sold48 / o.eligible : 0;
   const metric = anMetric.own;
@@ -857,60 +836,16 @@ function renderOwnView(a) {
       \${grid(values, color, { fmt, hue, id: "go" })}
     </div>
     <div class="card"><h2>\${metric === "rate" ? "売れやすい曜日×時間 上位10" : "よく買われる曜日×時間 上位10"}</h2>\${rankList(ranking, metric === "rate" ? "同じマスに2件以上の結果がたまると表示されます" : "購入の記録がたまると表示されます")}</div>
-    <div class="card"><h2>このデータから作ったスケジュール(②)</h2><div class="slots">\${a.recommend.own.map((t) => \`<span class="slot">\${t}</span>\`).join("")}</div>
-      <div class="muted" style="margin-top:8px">\${r.level === "low" ? "データ不足のため、②を選んでも当面は均等出品になります。" : "時間タブで②を選ぶと、このスケジュールが使われます。"}</div></div>\`;
+    <div class="card"><h2>このデータから作ったスケジュール</h2><div class="slots">\${a.recommend.map((t) => \`<span class="slot">\${t}</span>\`).join("")}</div>
+      <div class="muted" style="margin-top:8px">\${r.level === "low" ? "データ不足のため、当面は均等出品になります。" : "毎日0時(または時間タブの「今すぐ作り直す」)でこのスケジュールが使われます。"}</div></div>\`;
   $$("[data-m]").forEach((b) => (b.onclick = () => { anMetric.own = b.dataset.m; renderAnalysis(); }));
   bindGrid("go", detail);
-}
-
-function renderMarketView(a) {
-  const m = a.market, r = a.ready.market;
-  const lv = { low: "データ不足", mid: "参考程度", high: "十分" };
-  const hrs = m.obs.map((x) => x / 60);
-  const ok = (i) => hrs[i] >= 0.25; // 15分以上観測したマスだけ数字を出す
-  const demand = m.sales.map((v, i) => (ok(i) ? v / hrs[i] : null));
-  const supply = m.supply.map((v, i) => (ok(i) ? v / hrs[i] : null));
-  const nd = norm01(demand), ns = norm01(supply);
-  const score = demand.map((d, i) => (d === null ? null : 0.7 * nd[i] + 0.3 * (1 - ns[i])));
-  const metric = anMetric.market;
-  const conf = { demand: [demand, norm01(demand), (v) => v.toFixed(1), "pink"], supply: [supply, norm01(supply), (v) => Math.round(v), "cyan"], score: [score, norm01(score), (v) => Math.round(v * 100), "green"] }[metric];
-  const detail = (i) => ok(i) ? \`<b>\${cellName(i)}</b>: 観測\${hrs[i].toFixed(1)}時間 ・ 売れた\${m.sales[i]}件(1時間あたり\${demand[i].toFixed(2)}件) ・ ライバルの新着\${m.supply[i]}件(1時間あたり\${supply[i].toFixed(1)}件) ・ 狙い目スコア\${Math.round(score[i] * 100)}\` : \`<b>\${cellName(i)}</b>: まだ十分に観測していません\`;
-  const arr = metric === "supply" ? supply.map((v) => (v === null ? null : -v)) : conf[0];
-  const ranking = arr.map((v, i) => ({ v, i })).filter((x) => x.v !== null && hrs[x.i] >= 0.5).sort((p, q) => q.v - p.v).slice(0, 10)
-    .map((x) => ({ name: cellName(x.i), text: metric === "demand" ? \`1時間あたり\${demand[x.i].toFixed(2)}件\` : metric === "supply" ? \`ライバル\${supply[x.i].toFixed(1)}件/時(少ない)\` : \`スコア\${Math.round(score[x.i] * 100)}(需要\${demand[x.i].toFixed(2)}・ライバル\${supply[x.i].toFixed(1)})\` }));
-  const note = { demand: "マスの数字=1時間あたりに売れた引退垢の件数(0〜5,000円)。観測時間で割っているので、見ていた時間の長さに左右されません。", supply: "マスの数字=1時間あたりの新規出品・更新の件数(ライバルの多さ)。少ないほど自分の出品が目立ちます。", score: "マスの数字=狙い目スコア(0〜100)。買われやすさ(7割)とライバルの少なさ(3割)を合わせたもので、③のスケジュールはこれを使います。" }[metric];
-  $("#an-body").innerHTML = \`
-    <div class="card">
-      <h2>概要 <span class="q">X(Twitter)の引退垢・0〜5,000円・注目アカウント除外</span></h2>
-      <dl class="dl">
-        <dt>観測開始</dt><dd>\${m.firstAt ? fmtDate(m.firstAt) : "まだ"}</dd>
-        <dt>観測した日数 / 時間</dt><dd>\${m.days} 日 / \${m.obsHours.toFixed(1)} 時間</dd>
-        <dt>一覧の確認回数</dt><dd>\${m.polls} 回</dd>
-        <dt>売れた件数(推定)</dt><dd>\${m.totalSales} 件</dd>
-        <dt>記録したライバルの新着</dt><dd>\${m.totalSupply} 件</dd>
-        <dt>売れたか確認待ち</dt><dd>\${m.verifyLeft} 件</dd>
-        <dt>最終調査</dt><dd>\${m.lastPoll ? fmtDate(m.lastPoll) : "まだ"}</dd>
-      </dl>
-      <div class="banner \${r.level === "high" ? "info" : "warn"}" style="margin:12px 0 0"><div><b>データの信頼度: \${lv[r.level]}</b><br>\${esc(r.note)}</div></div>
-    </div>
-    <div class="card">
-      <h2>曜日 × 時間</h2>
-      <div class="seg sm"><button data-m="demand" class="\${metric === "demand" ? "on" : ""}">売れた件数</button><button data-m="supply" class="\${metric === "supply" ? "on" : ""}">ライバル数</button><button data-m="score" class="\${metric === "score" ? "on" : ""}">狙い目</button></div>
-      <div class="muted" style="margin:8px 0">\${note}</div>
-      \${grid(conf[0], conf[1], { fmt: conf[2], hue: conf[3], id: "gm" })}
-    </div>
-    <div class="card"><h2>\${metric === "demand" ? "よく売れる曜日×時間 上位10" : metric === "supply" ? "ライバルが少ない曜日×時間 上位10" : "狙い目の曜日×時間 上位10"}</h2>\${rankList(ranking, "30分以上観測したマスがたまると表示されます")}</div>
-    <div class="card"><h2>最近売れた引退垢</h2>\${m.recent.length ? m.recent.map((e) => \`<div class="log"><span class="t">\${fmtDate(e.at)}</span><span class="m">商品\${e.id}</span><span class="t">\${Number(e.price).toLocaleString()}円</span></div>\`).join("") : "<div class='center'>まだ検知していません</div>"}</div>
-    <div class="card"><h2>このデータから作ったスケジュール(③)</h2><div class="slots">\${a.recommend.market.map((t) => \`<span class="slot">\${t}</span>\`).join("")}</div>
-      <div class="muted" style="margin-top:8px">\${r.level === "low" ? "データ不足のため、③を選んでも当面は均等出品になります。" : "時間タブで③を選ぶと、このスケジュールが使われます。"}</div></div>\`;
-  $$("[data-m]").forEach((b) => (b.onclick = () => { anMetric.market = b.dataset.m; renderAnalysis(); }));
-  bindGrid("gm", detail);
 }
 
 // ---- ログ(リアルタイム) ----
 // ツールとの間に専用回線(WebSocket)を張り、ログが書かれた瞬間に受け取って、上から滑り込ませる。
 // 回線がつながらない環境では、5秒ごとに取りに行く方式に自動で切り替える。
-const LOG_CATS = ["すべて", "定期実行", "出品", "売れ行き", "市場調査", "最適化", "通信", "管理画面", "アクセス", "システム"];
+const LOG_CATS = ["すべて", "定期実行", "出品", "売れ行き", "最適化", "通信", "管理画面", "アクセス", "システム"];
 let opsBuf = [], opsIds = new Set(), opsNewest = "", opsCat = "すべて", opsLevel = "all", opsPaused = false, opsNet = null, opsOpen = new Set(), opsQ = "", opsTrace = "";
 let ws = null, wsState = "off", wsRetry = 0, wsTimer = null, wsPing = null, pollTimer = null, held = [];
 
@@ -1117,10 +1052,6 @@ function renderSettings() {
         </ol>
         ブラウザでログアウトすると無効になります。普段どおり放置すれば長期間有効です。
       </div></details>
-    </div>
-    <div class="card">
-      <h2>出品モード</h2>
-      <div class="muted">出品モード(①均等 / ②自分データ / ③引退垢全体データ)の切り替えは「時間」タブに移動しました。</div>
     </div>
   \`;
   $("#st_sessSave").onclick = async () => { const v = $("#st_sess").value.trim(); if (!v) return toast("値を入力してください", true); try { await api("/session", { method: "POST", body: JSON.stringify({ phpsessid: v }) }); toast("保存しました"); $("#st_sess").value = ""; refresh(); } catch (e) { toast(e.message, true); } };

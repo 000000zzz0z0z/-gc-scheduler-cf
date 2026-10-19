@@ -7,8 +7,8 @@ export const DEFAULT_SETTINGS = {
   graceMin: 100000, // 事実上無制限(予定を過ぎても出品する)
   minIntervalMin: 30, // ゲームクラブの「30分に1回」制限
   schedule: { mode: "interval", start: "00:00", end: "24:00", count: 15, manual: [] },
-  // 出品モード: "even"=①均等 / "own"=②自分データ最適化 / "market"=③X全体データ最適化
-  optimizeMode: "even",
+  // 出品モードは「自分の売れ行きで最適化」だけ(データが少ないうちは均等に出品)
+  optimizeMode: "own",
 };
 const DEFAULT_STATE = { pointer: 0, days: {}, alert: null };
 
@@ -30,7 +30,7 @@ export async function load(env, key) {
     const old = await env.GC_KV.get(key, { type: "json" });
     if (old != null) { await store.put(key, old); v = old; }
   }
-  if (key === "settings") return { ...DEFAULT_SETTINGS, ...(v || {}), schedule: { ...DEFAULT_SETTINGS.schedule, ...(v?.schedule || {}) } };
+  if (key === "settings") return { ...DEFAULT_SETTINGS, ...(v || {}), optimizeMode: "own", schedule: { ...DEFAULT_SETTINGS.schedule, ...(v?.schedule || {}) } };
   if (key === "state") return { ...DEFAULT_STATE, ...(v || {}) };
   if (key === "drafts") return v || [];
   if (key === "secret") return v || {};
@@ -139,7 +139,7 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
       d.publishedCount = (d.publishedCount || 0) + 1;
       d.lastPublishedAt = now;
     }
-    // 自分の売れ行き追跡に登録(モード②のデータ源)
+    // 自分の売れ行き追跡に登録(最適化のデータ源)
     try {
       const { loadOwn, addOwnListing, saveOwn } = await import("./own.mjs");
       const own = await loadOwn(store);
@@ -168,9 +168,9 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
 
 // 1分おきに呼ばれる。
 // 1回の処理で行う「重い仕事」(ゲームクラブへの複数回の通信)は1つだけにする。
-// 優先順: 予定枠の出品 → 自分の売れ行き確認(10分おき) → 市場調査の一覧(15分おき) → 消えた商品の確認(少しずつ)
+// 優先順: 予定枠の出品 → 自分の売れ行き確認(10分おき)
+// 他の人の出品(公開一覧・商品ページ)は確認しない。
 // 各作業が終わるたびにログと通信回数を保存するので、万一途中で止まっても経過が残る。
-const MODE_LABEL = { even: "①均等", own: "②自分データ", market: "③引退垢全体データ" };
 const fmtHM = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
 const agoMin = (now, t) => (t ? Math.floor((now - t) / 60e3) + "分前" : "未実施");
 
@@ -186,10 +186,21 @@ export async function tick(env, now = Date.now()) {
   const p = jstParts(now);
   const nowLabel = `${p.mo}/${p.d} ${String(p.h).padStart(2, "0")}:${String(p.mi).padStart(2, "0")}`;
 
+  // 旧バージョン(①均等/③市場データ)からの切り替え: 一度だけスケジュールを作り直し、市場調査の保存データを消す
+  try {
+    const raw = await store.get("settings");
+    if (raw && raw.optimizeMode !== "own") {
+      log.info("システム", `出品モードを「自分の売れ行きで最適化」に統一しました(以前: ${raw.optimizeMode || "未設定"})。市場調査(他の人の出品の確認)は廃止しました`);
+      await rebuildSchedule(env, settings, log, now);
+      if (typeof store.del === "function") await store.del(["market", "lastMarketScan"]);
+      await log.flush(store);
+    }
+  } catch (e) { log.warn("システム", "旧バージョンからの切り替えに失敗しました(次回また試します)", errInfo(e)); await log.flush(store); }
+
   if (settings.paused) {
     if (now - ((await store.get("lastPausedLog")) || 0) > 3600e3) {
       await store.put("lastPausedLog", now);
-      log.info("定期実行", `${nowLabel} 停止中です(出品・売れ行き確認・市場調査はすべて止まっています)。このメッセージは1時間に1回だけ出ます`);
+      log.info("定期実行", `${nowLabel} 停止中です(出品・売れ行き確認はすべて止まっています)。このメッセージは1時間に1回だけ出ます`);
       await log.flush(store);
     }
     return { skipped: "paused" };
@@ -212,7 +223,7 @@ export async function tick(env, now = Date.now()) {
   try {
     const [state, secret, ts] = await Promise.all([
       load(env, "state"), load(env, "secret"),
-      store.getMany ? store.getMany(["lastOwnScan", "lastMarketScan", "lock:last", "lastOptimize"]) : Promise.resolve({}),
+      store.getMany ? store.getMany(["lastOwnScan", "lock:last", "lastOptimize"]) : Promise.resolve({}),
     ]);
     const slots = computeSlots(settings.schedule, settings.dailyLimit);
     const dk = dayKey(now);
@@ -225,10 +236,10 @@ export async function tick(env, now = Date.now()) {
 
     // その時点の状態を記録(何が起きているかを後から追えるように)
     log.debug("定期実行", `${nowLabel} の定期実行を開始(処理番号 ${log.trace})`, {
-      モード: MODE_LABEL[settings.optimizeMode || "even"], 今日の出品: `${day.count}/${settings.dailyLimit}`,
+      今日の出品: `${day.count}/${settings.dailyLimit}`,
       次の予定枠: nextSlot != null ? fmtHM(nextSlot) : "今日はもうなし", 未処理の過去の枠: pending.map(fmtHM).join(" ") || "なし",
       "30分ルール": lockLeft ? `あと${Math.ceil(lockLeft / 60e3)}分は出品できない` : "出品できる",
-      売れ行き確認: agoMin(now, ts.lastOwnScan), 市場調査: agoMin(now, ts.lastMarketScan), ログイン情報: secret.phpsessid ? "登録済み" : "未登録",
+      売れ行き確認: agoMin(now, ts.lastOwnScan), ログイン情報: secret.phpsessid ? "登録済み" : "未登録",
     });
 
     // --- 1) 予定枠の出品 ---
@@ -255,33 +266,20 @@ export async function tick(env, now = Date.now()) {
       await log.flush(store);
     } else {
       const ownDue = secret.phpsessid && now - (ts.lastOwnScan || 0) >= 10 * 60e3;
-      const marketDue = now - (ts.lastMarketScan || 0) >= 15 * 60e3;
       if (ownDue) {
         log.info("定期実行", `${nowLabel} 判断: ${decision ? decision + " → " : ""}前回の売れ行き確認から10分以上たったので、自分の売れ行きを確認します`);
         await store.put("lastOwnScan", now);
         const { scanOwn } = await import("./own.mjs");
         await step("own", "自分の売れ行き確認", (f) => scanOwn(store, secret.phpsessid, f, log, now));
-      } else if (marketDue) {
-        log.info("定期実行", `${nowLabel} 判断: ${decision ? decision + " → " : ""}前回の市場調査から15分以上たったので、X一覧を調査します`);
-        await store.put("lastMarketScan", now);
-        const { pollMarket } = await import("./market.mjs");
-        await step("market", "市場調査(X一覧4ページ)", (f) => pollMarket(store, f, log, now, { verifyMax: 0 }));
       } else {
-        const { loadMarket, verifyMarket } = await import("./market.mjs");
-        const m = await loadMarket(store);
-        if (m.verify.length) {
-          log.info("定期実行", `${nowLabel} 判断: ${decision ? decision + " → " : ""}一覧から消えた商品が${m.verify.length}件あるので、売れたか確認します(1分に最大2件)`);
-          await step("verify", "消えた商品の確認", (f) => verifyMarket(store, f, log, 2, now));
-        } else {
-          log.debug("定期実行", `${nowLabel} 判断: ${decision || "予定枠なし"}。売れ行き確認(${agoMin(now, ts.lastOwnScan)})・市場調査(${agoMin(now, ts.lastMarketScan)})はまだ間隔内、確認待ちの商品もないので、今回は待機します`);
-        }
+        log.debug("定期実行", `${nowLabel} 判断: ${decision || "予定枠なし"}。売れ行き確認(${agoMin(now, ts.lastOwnScan)})はまだ間隔内なので、今回は待機します`);
       }
     }
 
-    // --- 5) モードに応じたスケジュール再構築(1日1回・JST 0時台) ---
-    if (settings.optimizeMode !== "even" && p.h === 0 && p.mi < 10 && ts.lastOptimize !== dk) {
+    // --- 2) 自分の売れ行きからスケジュール再構築(1日1回・JST 0時台) ---
+    if (p.h === 0 && p.mi < 10 && ts.lastOptimize !== dk) {
       await store.put("lastOptimize", dk);
-      log.info("定期実行", `${nowLabel} 判断: 0時台なので、${MODE_LABEL[settings.optimizeMode]}モードのスケジュールを作り直します`);
+      log.info("定期実行", `${nowLabel} 判断: 0時台なので、自分の売れ行きからスケジュールを作り直します`);
       out.optimize = await rebuildSchedule(env, settings, log, now);
     }
   } catch (e) {
@@ -303,28 +301,17 @@ export async function tick(env, now = Date.now()) {
   return out;
 }
 
-// モードに応じて schedule.manual を作り直す
+// 自分の売れ行きから schedule.manual を作り直す(データ不足の間は均等)
 export async function rebuildSchedule(env, settings, log, now = Date.now()) {
   const store = db(env);
-  const { evenSlots, recommendFromOwn, recommendFromMarket, readiness } = await import("./optimize.mjs");
+  const { evenSlots, recommendFromOwn, readiness } = await import("./optimize.mjs");
+  const { loadOwn, ownStats } = await import("./own.mjs");
+  const st = ownStats(await loadOwn(store), now);
+  const r = readiness(st);
   let times, reason;
-  if (settings.optimizeMode === "own") {
-    const { loadOwn, ownStats } = await import("./own.mjs");
-    const st = ownStats(await loadOwn(store), now);
-    const r = readiness(st, { totalSales: 0, days: 0 }).own;
-    log.debug("最適化", `②の入力データ: ツールの出品${st.total}件・結果が出た${st.eligible}件・48時間以内に売れた${st.sold48}件・結果待ち${st.pending}件・集計${st.days}日目`, { 信頼度: r.level });
-    if (r.level === "low") { log.info("最適化", `自分データが不足のため、均等出品のままにします(${r.note})`); times = evenSlots(settings.dailyLimit); reason = "own-low"; }
-    else { times = recommendFromOwn(st, { count: settings.dailyLimit, now }); reason = "own"; log.info("最適化", `自分の売れ行きからスケジュールを更新しました(${r.note})`, { times }); }
-  } else if (settings.optimizeMode === "market") {
-    const { loadMarket, marketStats } = await import("./market.mjs");
-    const ms = marketStats(await loadMarket(store), now);
-    const r = readiness({ sold48: 0 }, ms).market;
-    log.debug("最適化", `③の入力データ: 観測${ms.days}日・${ms.obsHours.toFixed(1)}時間・売れた${ms.totalSales}件・ライバルの新着${ms.totalSupply}件`, { 信頼度: r.level });
-    if (r.level === "low") { log.info("最適化", `市場データが不足のため、均等出品のままにします(${r.note})`); times = evenSlots(settings.dailyLimit); reason = "market-low"; }
-    else { times = recommendFromMarket(ms, { count: settings.dailyLimit, now }); reason = "market"; log.info("最適化", `引退垢全体の市場データからスケジュールを更新しました(${r.note})`, { times }); }
-  } else {
-    times = evenSlots(settings.dailyLimit); reason = "even";
-  }
+  log.debug("最適化", `入力データ: ツールの出品${st.total}件・結果が出た${st.eligible}件・48時間以内に売れた${st.sold48}件・結果待ち${st.pending}件・集計${st.days}日目`, { 信頼度: r.level });
+  if (r.level === "low") { log.info("最適化", `自分データが不足のため、均等出品のままにします(${r.note})`); times = evenSlots(settings.dailyLimit); reason = "own-low"; }
+  else { times = recommendFromOwn(st, { count: settings.dailyLimit, now }); reason = "own"; log.info("最適化", `自分の売れ行きからスケジュールを更新しました(${r.note})`, { times }); }
   const s = await load(env, "settings");
   const before = computeSlots(s.schedule, s.dailyLimit).map((m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`);
   s.schedule = { ...s.schedule, mode: "manual", manual: times };
@@ -333,4 +320,3 @@ export async function rebuildSchedule(env, settings, log, now = Date.now()) {
   log.info("最適化", `スケジュールを保存しました(${times.length}枠): ${times.join(" ")}`, { 変更前: before.join(" "), 追加された時刻: added.join(" ") || "なし", 外された時刻: removed.join(" ") || "なし", 理由: reason });
   return { times, reason };
 }
-

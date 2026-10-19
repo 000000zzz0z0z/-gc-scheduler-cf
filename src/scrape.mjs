@@ -1,7 +1,7 @@
 // ゲームクラブのページを読み取る部分。
 // ・自分のマイページ(出品中/取引中/完了)
 // ・取引チャットの「取引情報」(販売日時)
-// ・X(Twitter)カテゴリの公開一覧と商品ページ(市場調査)
+// 他の人の出品(公開一覧・商品ページ)は読みません。
 import { gcFetch } from "./gc.mjs";
 
 export const TARGET_CATEGORY = "twitter";
@@ -67,49 +67,4 @@ export async function fetchChatSoldAt(session, chatId, fetcher = null) {
   const res = await gcFetch(`/mypage/chat/${chatId}`, session, { headers: { Accept: "text/html" } }, fetcher, { cat: "売れ行き", what: `取引情報の販売日時を確認(チャット${chatId}・未読なし)` });
   if (res.status !== 200) return null;
   return parseSoldAtFromChat(await res.text());
-}
-
-// ===== 市場調査: X(Twitter)カテゴリの公開一覧 =====
-// 1件: { id, t(更新日時), price, state: "active"|"sold"|"ended", featured(注目アカウント/PR) }
-export function parseMarketHtml(htmlText) {
-  const parts = htmlText.split(/<div class="item-row\s+">/);
-  const items = [];
-  for (let i = 1; i < parts.length; i++) {
-    const r = parts[i];
-    const idm = r.match(/href="\/twitter\/(\d+)"/);
-    if (!idm) continue;
-    const st = (r.match(/class="product-statuses ([^"]*)"/) || [])[1] || "";
-    const tags = [...r.matchAll(/<span class="item-status ([^"]*)">([^<]*)<\/span>/g)].map((m) => m[2]);
-    items.push({
-      id: idm[1],
-      t: parseJst((r.match(/fa-history"><\/i>\s*([0-9/: ]+?)\s*<\/span>/) || [])[1]),
-      price: Number(((r.match(/class="price">&yen;([\d,]+)/) || [])[1] || "").replace(/,/g, "")) || 0,
-      state: /\bsold\b/.test(st) ? "sold" : /end-sales/.test(st) ? "ended" : "active",
-      featured: tags.includes("注目アカウント") || tags.includes("PR"),
-    });
-  }
-  return items;
-}
-export async function fetchMarketPage(page, fetcher) {
-  // 引退垢(アカウント種別10)だけに絞った一覧。[ ] はURL用に変換して送る
-  const base = "/twitter?search%5BaccountType%5D=10";
-  const url = page > 1 ? `${base}&page=${page}` : base;
-  const res = await gcFetch(url, null, { headers: { Accept: "text/html" } }, fetcher, { cat: "市場調査", what: `引退垢一覧 ${page}ページ目を確認` });
-  if (res.status !== 200) return { ok: false, status: res.status, items: [] };
-  const h = await res.text();
-  const t0 = Date.now();
-  const items = parseMarketHtml(h);
-  return { ok: true, items, bytes: h.length, parseMs: Date.now() - t0 };
-}
-// 商品ページで「売り切れ」ボタンが出ているか(説明文中の言葉とは区別する)
-export function parseProductState(htmlText) {
-  if (/btn-buy[^"]*btn-disabled[^>]*>\s*売り切れ/.test(htmlText)) return "sold";
-  if (/btn-buy/.test(htmlText) && !/btn-disabled/.test((htmlText.match(/class="btn-buy[^"]*"/) || [""])[0])) return "active";
-  return "other";
-}
-export async function fetchProductState(id, fetcher) {
-  const res = await gcFetch(`/twitter/${id}`, null, { headers: { Accept: "text/html" } }, fetcher, { cat: "市場調査", what: `一覧から消えた商品${id}が売れたか確認` });
-  if (res.status === 404) return "gone";
-  if (res.status !== 200) return "unknown";
-  return parseProductState(await res.text());
 }

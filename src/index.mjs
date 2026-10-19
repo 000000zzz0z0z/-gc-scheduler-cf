@@ -32,10 +32,6 @@ const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n)
 function mergeSettings(cur, body) {
   const s = JSON.parse(JSON.stringify(cur));
   if ("paused" in body) s.paused = !!body.paused;
-  if ("optimizeMode" in body) {
-    if (!["even", "own", "market"].includes(body.optimizeMode)) throw new Error("出品モードが正しくありません。");
-    s.optimizeMode = body.optimizeMode;
-  }
   if (body.schedule) {
     const sc = body.schedule;
     if (sc.mode && !["interval", "manual"].includes(sc.mode)) throw new Error("スケジュールの方式が正しくありません。");
@@ -180,36 +176,24 @@ async function handleApi(request, env, path) {
       return json({ ok: true });
     }
 
-    // ===== 分析(②自分 / ③X全体) =====
+    // ===== 分析(自分の売れ行き) =====
     if (method === "GET" && sub[0] === "analysis") {
       const store = db(env);
       const { loadOwn, ownStats } = await import("./own.mjs");
-      const { loadMarket, marketStats } = await import("./market.mjs");
-      const { recommendFromOwn, recommendFromMarket, evenSlots, readiness } = await import("./optimize.mjs");
+      const { recommendFromOwn, readiness } = await import("./optimize.mjs");
       const settings = await load(env, "settings");
       const now = Date.now();
       const own = ownStats(await loadOwn(store), now);
-      const market = marketStats(await loadMarket(store), now);
-      const ready = readiness(own, market);
-      return json({
-        now, mode: settings.optimizeMode, ready, own, market,
-        recommend: {
-          even: evenSlots(settings.dailyLimit),
-          own: recommendFromOwn(own, { count: settings.dailyLimit, now }),
-          market: recommendFromMarket(market, { count: settings.dailyLimit, now }),
-        },
-      });
+      return json({ now, ready: readiness(own), own, recommend: recommendFromOwn(own, { count: settings.dailyLimit, now }) });
     }
 
-    // ===== 出品モードの切り替え(すぐにスケジュールを作り直す) =====
-    if (method === "POST" && sub[0] === "mode") {
+    // ===== スケジュールを今すぐ作り直す =====
+    if (method === "POST" && sub[0] === "rebuild") {
       const { createLogger } = await import("./log.mjs");
       const { rebuildSchedule } = await import("./core.mjs");
       const log = createLogger("manual");
-      const s = mergeSettings(await load(env, "settings"), { optimizeMode: body.mode });
-      await save(env, "settings", s);
-      const label = { even: "①均等", own: "②自分データ", market: "③引退垢全体データ" }[s.optimizeMode];
-      log.info("管理画面", `出品モードを「${label}」に変更しました`);
+      const s = await load(env, "settings");
+      log.info("管理画面", "「今すぐ作り直す」が押されました");
       const r = await rebuildSchedule(env, s, log);
       await log.flush(db(env));
       return json({ ok: true, ...r });
@@ -230,7 +214,7 @@ async function handleApi(request, env, path) {
       return json({ ...r, now });
     }
 
-    // ===== 今すぐ確認(自分の売れ行き＋市場調査) =====
+    // ===== 今すぐ確認(自分の売れ行き) =====
     if (method === "POST" && sub[0] === "scan") {
       const { createLogger } = await import("./log.mjs");
       const { createFetcher } = await import("./net.mjs");
@@ -246,12 +230,7 @@ async function handleApi(request, env, path) {
           const { scanOwn } = await import("./own.mjs");
           await store.put("lastOwnScan", Date.now());
           out.own = await scanOwn(store, secret.phpsessid, fetcher, log);
-        }
-        if (body.market !== false) {
-          const { pollMarket } = await import("./market.mjs");
-          await store.put("lastMarketScan", Date.now());
-          out.market = await pollMarket(store, fetcher, log, Date.now(), { verifyMax: 0 });
-        }
+        } else throw new Error("先に設定タブでPHPSESSIDを登録してください。");
       } finally { await fetcher.finish(); await log.flush(store); }
       return json({ ok: true, ...out });
     }
