@@ -709,6 +709,15 @@ function renderSettings() {
       </div></details>
     </div>
     <div class="card">
+      <h2>原因究明の実験</h2>
+      <div class="muted" style="margin-bottom:10px">中身がまったく同じ3つの通信(相手から見た自分の姿の確認・トップページ・マイページ)を、<b>①画面の操作</b>と<b>②自動実行</b>の2つのきっかけで送り、結果を比べます。出品はしません。①を押したあと②を押し、1分ほど待ってください。</div>
+      <div class="row">
+        <button class="btn p" id="dg_ui">① 画面の操作で実行</button>
+        <button class="btn" id="dg_auto">② 自動実行で実行(予約)</button>
+      </div>
+      <div id="dg_out" style="margin-top:12px"></div>
+    </div>
+    <div class="card">
       <h2>通信の出どころテスト</h2>
       <div class="muted" style="margin-bottom:10px">ゲームクラブは日本以外からのアクセスを確認画面で止めるため、ツールは「保存領域」(場所が固定されている部分)から通信します。このボタンで、保存領域がどこの拠点にあるかと、そこからゲームクラブに通れるか(ログインなしのトップページを各1回だけ読みます)を確かめ、日本から通れるものを自動で選びます。<b>新しくした直後に一度押してください。</b></div>
       <button class="btn" id="st_origin">通信の出どころテスト</button>
@@ -717,6 +726,43 @@ function renderSettings() {
   `;
   $("#st_sessSave").onclick = async () => { const v = $("#st_sess").value.trim(); if (!v) return toast("値を入力してください", true); try { await api("/session", { method: "POST", body: JSON.stringify({ phpsessid: v }) }); toast("保存しました"); $("#st_sess").value = ""; refresh(); } catch (e) { toast(e.message, true); } };
   if ($("#st_sessDel")) $("#st_sessDel").onclick = async () => { if (!confirm("削除しますか?")) return; await api("/session", { method: "DELETE" }); toast("削除しました"); refresh(); };
+  // ---- 原因究明の実験 ----
+  const dgCell = (x) => !x ? "—" : x.skipped ? '<span class="muted">未実施(ログイン情報なし)</span>' : x.error ? `<span class="bad">通信エラー</span>` : x.challenge ? `<span class="bad">✕ 確認画面(${x.status})</span>` : x.status === 200 ? `<span class="okc">✓ ${x.status}</span>` : `<span class="bad">${x.status}</span>`;
+  const dgCol = (r) => !r ? '<td class="muted">まだ</td>' : `<td>${fmtTime(r.at)}<br><span class="muted">拠点 ${esc(COLO_NAME[r.seen.colo] || r.seen.colo || "?")}</span></td>`;
+  const drawDiag = (d) => {
+    const u = d.ui, a = d.auto;
+    const row = (label, f) => `<tr><th>${label}</th><td>${u ? f(u) : "—"}</td><td>${a ? f(a) : d.pending ? '<span class="muted">実行待ち…</span>' : "—"}</td></tr>`;
+    let verdict = "";
+    if (u && a) {
+      const okU = !u.top.challenge && !u.mypage.challenge && !u.top.error, okA = !a.top.challenge && !a.mypage.challenge && !a.top.error;
+      const diffSeen = u.seen.loc !== a.seen.loc || u.seen.ipKind !== a.seen.ipKind;
+      verdict = okU && !okA ? `<div class="banner warn" style="margin:10px 0 0"><div><b>確定: きっかけだけで結果が変わります。</b>同じ場所・同じ中身の通信でも、自動実行だけ止められました。${diffSeen ? `相手から見た姿も違います(画面の操作=国 ${esc(u.seen.loc)}・${esc(u.seen.ipKind)} / 自動実行=国 ${esc(a.seen.loc)}・${esc(a.seen.ipKind)})。<b>止められている理由は、この「見え方の違い」</b>だと考えられます。` : "相手から見た国・アドレスは同じなので、別の手がかりで判定されています。"}</div></div>`
+        : okU && okA ? '<div class="banner info" style="margin:10px 0 0"><div><b>どちらも通れました。</b>今はゲームクラブ側の判定が緩んでいる可能性があります。「今すぐ自動出品」も試してください。</div></div>'
+        : !okU && !okA ? '<div class="banner warn" style="margin:10px 0 0"><div><b>どちらも止められました。</b>きっかけに関係なく止められています(判定がさらに厳しくなった可能性)。</div></div>'
+        : '<div class="banner warn" style="margin:10px 0 0"><div><b>画面の操作だけ止められ、自動実行は通れました。</b>想定外の結果です。このまま教えてください。</div></div>';
+    }
+    $("#dg_out").innerHTML = `<div class="tblwrap"><table class="dgt"><tr><th></th><th>① 画面の操作</th><th>② 自動実行</th></tr>
+      <tr><th>実行時刻</th>${dgCol(u).replace("<td>", "<td>")}${a ? dgCol(a) : `<td>${d.pending ? '<span class="muted">実行待ち…</span>' : '<span class="muted">まだ</span>'}</td>`}</tr>
+      ${row("相手から見た国", (r) => esc(r.seen.loc || "?"))}
+      ${row("相手から見たアドレス", (r) => esc(r.seen.ipKind))}
+      ${row("トップページ", (r) => dgCell(r.top))}
+      ${row("マイページ", (r) => dgCell(r.mypage))}
+      ${row("ゲームクラブ側の拠点", (r) => esc(COLO_NAME[r.top.colo] || r.top.colo || "?"))}
+    </table></div>${verdict}`;
+  };
+  let dgTimer = null;
+  const loadDiag = async () => { try { const d = await api("/diag"); drawDiag(d); return d; } catch (e) { $("#dg_out").textContent = e.message; } };
+  const watchDiag = (since) => {
+    clearInterval(dgTimer); const t0 = Date.now();
+    dgTimer = setInterval(async () => {
+      if (!$("#dg_out")) return clearInterval(dgTimer);
+      const d = await loadDiag();
+      if ((d && d.auto && d.auto.at >= since) || Date.now() - t0 > 5 * 60e3) { clearInterval(dgTimer); if (d && d.auto && d.auto.at >= since) { toast("②自動実行の結果が出ました"); window.Snd && Snd.success(); } }
+    }, 8000);
+  };
+  loadDiag();
+  $("#dg_ui").onclick = async (e) => { e.target.disabled = true; $("#dg_out").innerHTML = '<span class="muted">実行中…(10秒ほど)</span>'; try { await api("/diag/ui", { method: "POST", body: "{}" }); await loadDiag(); } catch (err) { toast(err.message, true); } e.target.disabled = false; };
+  $("#dg_auto").onclick = async (e) => { try { const r = await api("/diag/reserve", { method: "POST", body: "{}" }); toast("予約しました。1分以内に実行されます"); await loadDiag(); watchDiag(r.at); } catch (err) { toast(err.message, true); } };
   $("#st_origin").onclick = async (e) => {
     e.target.disabled = true; $("#st_originMsg").innerHTML = '<span class="muted">確認中…(10秒ほどかかります)</span>';
     try {

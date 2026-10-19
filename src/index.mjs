@@ -122,6 +122,27 @@ async function handleApi(request, env, path) {
     // 保存領域がどこの拠点にあるかと、そこからゲームクラブ(ログインなしのトップページ)に通れるかを確かめる。
     // 候補は2つ: データ本体の保存領域(main)と、中継専用の保存領域(relay-jp。画面=東京から初めて作るのでアジアに置かれる見込み)。
     // 日本にあって通れたほうを、以後の通信の出どころにする。休止中でも各1回だけ通信する(確認用)。
+    // ===== 原因究明の実験 =====
+    if (sub[0] === "diag") {
+      const st = db(env);
+      if (method === "POST" && sub[1] === "ui") {
+        const { runDiag, diagLine } = await import("./diag.mjs");
+        const secret = await load(env, "secret");
+        const r = await runDiag(st, secret.phpsessid ? String(secret.phpsessid).trim() : "", "ui");
+        await st.put("diag:ui", r);
+        await adminLog(env, `原因究明の実験(画面の操作): ${diagLine(r)}`, { cfRay: r.mypage.ray || r.top.ray, status: r.mypage.status ?? r.top.status });
+        return json({ ok: true, result: r });
+      }
+      if (method === "POST" && sub[1] === "reserve") {
+        await st.put("diagReserve", { at: Date.now() });
+        await adminLog(env, "原因究明の実験(自動実行)を予約しました");
+        return json({ ok: true, at: Date.now() });
+      }
+      if (method === "GET") {
+        const g = await st.getMany(["diag:ui", "diag:auto", "diagReserve"]);
+        return json({ ui: g["diag:ui"] || null, auto: g["diag:auto"] || null, pending: g.diagReserve || null });
+      }
+    }
     if (method === "POST" && sub[0] === "origin") {
       const { GC, UA } = await import("./gc.mjs");
       const main = db(env);

@@ -197,6 +197,20 @@ export async function tick(env, now = Date.now()) {
     }
   } catch (e) { log.warn("システム", "旧バージョンからの切り替えに失敗しました(次回また試します)", errInfo(e)); await log.flush(store); }
 
+  // 原因究明の実験(画面で予約されたもの)。停止中・休止中でも、確認用に3回だけ通信する
+  try {
+    const dr = await store.get("diagReserve");
+    if (dr) {
+      await store.put("diagReserve", null);
+      const { runDiag, diagLine } = await import("./diag.mjs");
+      const secret = await load(env, "secret");
+      const r = await runDiag(store, secret.phpsessid ? String(secret.phpsessid).trim() : "", "auto");
+      await store.put("diag:auto", r);
+      log.info("システム", `原因究明の実験(自動実行): ${diagLine(r)}`, { cfRay: r.mypage.ray || r.top.ray, status: r.mypage.status ?? r.top.status });
+      await log.flush(store);
+    }
+  } catch (e) { log.error("システム", "原因究明の実験(自動実行)でエラーが起きました", errInfo(e)); await log.flush(store); }
+
   if (settings.paused) {
     if (now - ((await store.get("lastPausedLog")) || 0) > 3600e3) {
       await store.put("lastPausedLog", now);
