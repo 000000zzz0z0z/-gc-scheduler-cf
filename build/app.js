@@ -116,7 +116,13 @@ function renderBanners() {
   }
   const t = state.lastTick;
   if (t && nowMs() - t > 20 * 60000 && !state.settings.paused) {
-    b.innerHTML += `<div class="banner warn">自動実行が${ago(t)}から動いていないようです。Netlifyの Functions → tick のログを確認してください。</div>`;
+    b.innerHTML += `<div class="banner warn">自動実行が${ago(t)}から動いていないようです。日本のサーバー(外部起動)とCloudflareの Workers → gc-scheduler → Logs を確認してください。</div>`;
+  }
+  const x = state.ext;
+  if (x && nowMs() - x.at > 5 * 60000 && !state.settings.paused) {
+    b.innerHTML += `<div class="banner warn"><div><b>日本からの外部起動が止まっています</b>(最後: ${fmtDate(x.at)})。日本のサーバーが動いているか確認してください。止まっている間はCloudflareの自動実行に戻りますが、ゲームクラブに止められる可能性が高いです。</div></div>`;
+  } else if (x && x.country !== "JP") {
+    b.innerHTML += `<div class="banner warn"><div><b>外部起動の国が日本ではありません</b>(国 ${esc(x.country)})。起動元のサーバーが日本のリージョンにあるか確認してください。</div></div>`;
   }
 }
 window.clearAlert = async () => { await api("/alert/clear", { method: "POST" }); refresh(); };
@@ -149,6 +155,7 @@ function renderHome() {
         <dt>今日の出品</dt><dd>${state.today.count} / ${s.dailyLimit} 回</dd>
         <dt>次に出す下書き</dt><dd>${nextDraft ? esc(nextDraft.label) : "<span class='muted'>なし</span>"}</dd>
         <dt>ログイン状態</dt><dd>${state.session.set ? "<span class='pill ok'>登録済み</span>" : "<span class='pill off'>未登録</span>"}</dd>
+        <dt>起動のしかた</dt><dd>${state.ext && nowMs() - state.ext.at < 5 * 60000 ? `<span class='pill ok'>日本からの外部起動</span> <span class='muted'>${Math.max(0, Math.round((nowMs() - state.ext.at) / 1000))}秒前・国 ${esc(state.ext.country)}</span>` : "<span class='pill off'>Cloudflareの自動実行(アメリカ扱い)</span>"}</dd>
       </dl>
       <div class="fp">
         <button class="btn p" id="fpBtn" ${state.force && state.force.pending ? "disabled" : ""}>今すぐ自動出品</button>
@@ -709,6 +716,11 @@ function renderSettings() {
       </div></details>
     </div>
     <div class="card">
+      <h2>日本からの外部起動</h2>
+      <div class="muted" style="margin-bottom:10px">Cloudflareの自動実行は、ゲームクラブから「アメリカからの通信」と見られて止められます。そこで、<b>日本のサーバーが1分おきに下のURLを開く</b>ことでツールを動かします(その通信は「日本」と見られるので通れます)。URLには合言葉が入っているので、他人に見せないでください。</div>
+      <div id="ex_box" class="muted">読み込み中…</div>
+    </div>
+    <div class="card">
       <h2>原因究明の実験</h2>
       <div class="muted" style="margin-bottom:10px">中身がまったく同じ3つの通信(相手から見た自分の姿の確認・トップページ・マイページ)を、<b>①画面の操作</b>と<b>②自動実行</b>の2つのきっかけで送り、結果を比べます。出品はしません。①を押したあと②を押し、1分ほど待ってください。</div>
       <div class="row">
@@ -726,6 +738,27 @@ function renderSettings() {
   `;
   $("#st_sessSave").onclick = async () => { const v = $("#st_sess").value.trim(); if (!v) return toast("値を入力してください", true); try { await api("/session", { method: "POST", body: JSON.stringify({ phpsessid: v }) }); toast("保存しました"); $("#st_sess").value = ""; refresh(); } catch (e) { toast(e.message, true); } };
   if ($("#st_sessDel")) $("#st_sessDel").onclick = async () => { if (!confirm("削除しますか?")) return; await api("/session", { method: "DELETE" }); toast("削除しました"); refresh(); };
+  // ---- 日本からの外部起動 ----
+  const drawExt = (d) => {
+    const cmd = `(crontab -l 2>/dev/null | grep -v ext-tick; echo '* * * * * curl -fsS --max-time 110 "${d.url}" >/dev/null 2>&1') | crontab -`;
+    const i = d.info, live = i && nowMs() - i.at < 5 * 60000;
+    $("#ex_box").innerHTML = `
+      <dl class="dl">
+        <dt>状態</dt><dd>${!i ? "<span class='pill off'>まだ一度も起動されていません</span>" : live ? `<span class='pill ok'>動作中</span> 最後の起動 ${Math.round((nowMs() - i.at) / 1000)}秒前 ・ 国 <b class="${i.country === "JP" ? "okc" : "bad"}">${esc(i.country)}</b> ・ 拠点 ${esc(COLO_NAME[i.colo] || i.colo)}` : `<span class='pill off'>停止中</span> 最後の起動 ${fmtDate(i.at)}`}</dd>
+      </dl>
+      <div class="exl">① 起動用URL(合言葉入り)</div>
+      <div class="exrow"><input type="password" readonly id="ex_url" value="${esc(d.url)}"><button class="btn sm" id="ex_show">表示</button><button class="btn sm" id="ex_cu">コピー</button></div>
+      <div class="exl">② 日本のサーバーに貼るコマンド(1分おきに上のURLを開く設定)</div>
+      <div class="exrow"><input type="password" readonly id="ex_cmd" value="${esc(cmd)}"><button class="btn sm" id="ex_cc">コピー</button></div>
+      <div class="row" style="margin-top:10px"><button class="btn gho sm" id="ex_regen">合言葉を作り直す</button><span class="muted" style="font-size:12px">URLを人に見られたときに押してください(サーバーのコマンドも貼り直しが必要になります)</span></div>`;
+    const copy = async (v, m) => { try { await navigator.clipboard.writeText(v); toast(m); } catch { toast("コピーできませんでした。表示してから手動でコピーしてください", true); } };
+    $("#ex_show").onclick = () => { const e = $("#ex_url"); e.type = e.type === "password" ? "text" : "password"; $("#ex_cmd").type = e.type; $("#ex_show").textContent = e.type === "password" ? "表示" : "隠す"; };
+    $("#ex_cu").onclick = () => copy(d.url, "URLをコピーしました");
+    $("#ex_cc").onclick = () => copy(cmd, "コマンドをコピーしました");
+    $("#ex_regen").onclick = async () => { if (!confirm("合言葉を作り直します。今のURL・コマンドは使えなくなります。よろしいですか?")) return; try { drawExt(await api("/ext/regen", { method: "POST", body: "{}" })); toast("作り直しました。サーバーのコマンドも貼り直してください"); } catch (e) { toast(e.message, true); } };
+  };
+  api("/ext").then(drawExt).catch((e) => { $("#ex_box").textContent = e.message; });
+
   // ---- 原因究明の実験 ----
   const dgCell = (x) => !x ? "—" : x.skipped ? '<span class="muted">未実施(ログイン情報なし)</span>' : x.error ? `<span class="bad">通信エラー</span>` : x.challenge ? `<span class="bad">✕ 確認画面(${x.status})</span>` : x.status === 200 ? `<span class="okc">✓ ${x.status}</span>` : `<span class="bad">${x.status}</span>`;
   const dgCol = (r) => !r ? '<td class="muted">まだ</td>' : `<td>${fmtTime(r.at)}<br><span class="muted">拠点 ${esc(COLO_NAME[r.seen.colo] || r.seen.colo || "?")}</span></td>`;

@@ -83,10 +83,10 @@ async function handleApi(request, env, path) {
   try {
     if (method === "GET" && sub[0] === "state" && sub.length === 1) {
       const { netStatus } = await import("./net.mjs");
-      const [settings, secret, drafts, state, lastTick, net, force] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "drafts"), load(env, "state"), db(env).get("lastTick"), netStatus(db(env)), db(env).getMany(["forcePublish", "forceResult"])]);
+      const [settings, secret, drafts, state, lastTick, net, force] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "drafts"), load(env, "state"), db(env).get("lastTick"), netStatus(db(env)), db(env).getMany(["forcePublish", "forceResult", "ext:info"])]);
       const now = Date.now();
       const idx = nextDraftIndex(drafts, state.pointer);
-      return json({ now, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick, net, force: { pending: force.forcePublish || null, result: force.forceResult || null } });
+      return json({ now, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick, net, force: { pending: force.forcePublish || null, result: force.forceResult || null }, ext: force["ext:info"] || null });
     }
     if (method === "GET" && sub[0] === "logs" && sub.length === 1) return json({ logs: await loadLogs(env, 3000) });
 
@@ -122,6 +122,16 @@ async function handleApi(request, env, path) {
     // 保存領域がどこの拠点にあるかと、そこからゲームクラブ(ログインなしのトップページ)に通れるかを確かめる。
     // 候補は2つ: データ本体の保存領域(main)と、中継専用の保存領域(relay-jp。画面=東京から初めて作るのでアジアに置かれる見込み)。
     // 日本にあって通れたほうを、以後の通信の出どころにする。休止中でも各1回だけ通信する(確認用)。
+    // ===== 日本からの外部起動の設定 =====
+    if (sub[0] === "ext") {
+      const st = db(env);
+      const mk = () => (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, "").slice(0, 40);
+      let key = await st.get("ext:key");
+      if (method === "POST" && sub[1] === "regen") { key = mk(); await st.put("ext:key", key); await adminLog(env, "外部起動の合言葉を作り直しました(古いURLは使えなくなりました)"); }
+      if (!key) { key = mk(); await st.put("ext:key", key); }
+      const g = await st.getMany(["ext:info"]);
+      return json({ url: `${new URL(request.url).origin}/ext-tick?k=${key}`, info: g["ext:info"] || null });
+    }
     // ===== 原因究明の実験 =====
     if (sub[0] === "diag") {
       const st = db(env);
@@ -328,9 +338,40 @@ async function handleApi(request, env, path) {
   }
 }
 
+// ===== 日本からの外部起動 =====
+// Cloudflareの自動実行(Cron)には「人」がいないため、通信に「アメリカ」の札が付き、ゲームクラブに止められる。
+// 日本のサーバーが1分おきにこのURLを開くと、その通信には「日本」の札が付くので通れる(原因究明の実験で確定)。
+// 合言葉(k=)は保存領域に保存し、設定タブで確認・作り直しできる。
+async function extTick(request, env, url) {
+  const st = db(env);
+  const key = await st.get("ext:key");
+  const k = url.searchParams.get("k") || "";
+  if (!key || !safeEqual(k, key)) { await accessLog(env, request, "warn", "日本からの外部起動を拒否しました(合言葉が違います)"); return json({ ok: false }, 401); }
+  const now = Date.now();
+  const country = (request.cf && request.cf.country) || "?", colo = (request.cf && request.cf.colo) || "?";
+  const g = await st.getMany(["ext:last", "ext:warnAt"]);
+  if (now - (g["ext:last"] || 0) < 40e3) return json({ ok: true, ran: false, reason: "前回の起動から40秒たっていないため、今回は処理しません" });
+  const first = !g["ext:last"] || now - g["ext:last"] > 10 * 60e3;
+  await st.put("ext:last", now);
+  await st.put("ext:info", { at: now, country, colo });
+  const { createLogger } = await import("./log.mjs");
+  const l = createLogger("auto");
+  if (first) {
+    l.info("システム", `日本からの外部起動が始まりました(起動元の国 ${country}・拠点 ${colo})。以後、Cloudflareの自動実行はゲームクラブに通信せず待機します`);
+    if (country === "JP" && ((await st.get("net:pauseUntil")) || 0) > now) { await st.put("net:pauseUntil", 0); l.info("システム", "日本の札が付く起動になったため、通信の休止を解除しました"); }
+  }
+  if (country !== "JP" && now - (g["ext:warnAt"] || 0) > 3600e3) { await st.put("ext:warnAt", now); l.warn("システム", `外部起動の国が日本(JP)ではありません(国 ${country})。ゲームクラブに止められる可能性があります。起動元のサーバーが日本にあるか確認してください`); }
+  await l.flush(st);
+  try {
+    const r = await tick(env, now);
+    return json({ ok: true, ran: true, country, colo, did: Object.keys(r || {}) });
+  } catch (e) { return json({ ok: false, ran: true, country, error: e.message }, 500); }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === "/ext-tick") return extTick(request, env, url);
     // ===== リアルタイム表示の専用回線(WebSocket) =====
     // ブラウザの WebSocket は独自のヘッダーを付けられないので、パスワードは接続時の1回だけ k= で受け取る
     if (url.pathname === "/api/stream") {
@@ -360,6 +401,20 @@ export default {
   },
   // waitUntil を使うと約30秒で打ち切られるため、処理を直接待つ
   async scheduled(event, env, ctx) {
+    // 日本からの外部起動が動いている間(最後の起動から3分以内)は、こちらは何もしない
+    // (アメリカの札でゲームクラブに通信すると止められ、60分休止を招くため)
+    try {
+      const st = db(env);
+      const last = (await st.get("ext:last")) || 0;
+      if (Date.now() - last < 3 * 60e3) {
+        if (Date.now() - ((await st.get("ext:idleLog")) || 0) > 3600e3) {
+          await st.put("ext:idleLog", Date.now());
+          const { createLogger } = await import("./log.mjs"); const l = createLogger("auto");
+          l.debug("定期実行", "日本からの外部起動が動いているため、Cloudflareの自動実行は待機しています(このメッセージは1時間に1回)"); await l.flush(st);
+        }
+        return;
+      }
+    } catch {}
     try { const r = await tick(env); console.log("tick", JSON.stringify(r)); }
     catch (e) { console.log("tick error", e.message); }
   },
