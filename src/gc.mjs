@@ -201,13 +201,15 @@ export async function testConnection(session, { fetcher = null } = {}) {
   }
   const r = await readRes(res);
   const title = (r.text.match(/<title>([\s\S]*?)<\/title>/i) || [])[1]?.trim() || "";
-  if (r.kind === "blocked") return { ok: false, kind: "blocked", status: r.status, message: "Cloudflareにアクセスを拒否されました。サーバーからの自動出品はできない可能性が高いです。" };
-  if (r.kind === "session") return { ok: false, kind: "session", status: r.status, message: "ログインしていない状態として扱われました。PHPSESSIDを確認してください。" };
-  if (r.kind === "redirect") return { ok: false, kind: "unknown", status: r.status, message: `別のページへ転送されました: ${r.location}` };
-  if (res.status !== 200) return { ok: false, kind: "unknown", status: r.status, message: `想定外の応答です(ステータス${r.status})` };
+  const colo = (res.headers.get("cf-ray") || "").split("-").pop() || "不明";
+  const out = (o) => ({ ...o, colo, message: `${o.message}(通信の出どころ: ${colo})` });
+  if (r.kind === "blocked") return out({ ok: false, kind: "blocked", status: r.status, message: "Cloudflareにアクセスを拒否されました(確認画面で止められました)。" });
+  if (r.kind === "session") return out({ ok: false, kind: "session", status: r.status, message: "ログインしていない状態として扱われました。PHPSESSIDを確認してください。" });
+  if (r.kind === "redirect") return out({ ok: false, kind: "unknown", status: r.status, message: `別のページへ転送されました: ${r.location}` });
+  if (res.status !== 200) return out({ ok: false, kind: "unknown", status: r.status, message: `想定外の応答です(ステータス${r.status})` });
   const loggedIn = /ログアウト|logout/i.test(r.text);
   return loggedIn
-    ? { ok: true, status: 200, message: `接続できました。ログイン状態も有効です(ページ名: ${title || "不明"})` }
-    : { ok: false, kind: "session", status: 200, message: `ページは開けましたが、ログイン状態を確認できませんでした(ページ名: ${title || "不明"})` };
+    ? out({ ok: true, status: 200, message: `接続できました。ログイン状態も有効です(ページ名: ${title || "不明"})` })
+    : out({ ok: false, kind: "session", status: 200, message: `ページは開けましたが、ログイン状態を確認できませんでした(ページ名: ${title || "不明"})` });
 }
 

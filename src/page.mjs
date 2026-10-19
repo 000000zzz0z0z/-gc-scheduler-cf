@@ -1028,7 +1028,8 @@ function drawOps() {
   if (!rows.length) { list.innerHTML = \`<div class="center">\${opsBuf.length ? "この条件のログはありません" : "まだログがありません(稼働を開始すると記録されます)"}</div>\`; return; }
   list.innerHTML = rows.map((o) => opHtml(o, false)).join("");
 }
-const OPS_KEY = { path: "アクセス先", method: "方式", status: "応答コード", ms: "所要(ミリ秒)", bytes: "データ量", type: "データの種類", location: "転送先", cfRay: "Cloudflare識別番号", cfCache: "キャッシュ", cfMitigated: "Cloudflareの防御", setCookie: "Cookieの更新", waitMs: "待機(ミリ秒)", cookie: "ログイン情報の送信", ua: "名乗り", sendHeaders: "送ったヘッダー", bodyBytes: "送信データ量", todayCount: "今日の通信回数", error: "エラー内容", kind: "エラーの種類", stack: "発生箇所", productId: "商品番号", chatId: "チャット番号", unread: "未読", id: "商品番号", price: "価格", state: "状態", times: "時刻", keys: "変更項目", listingId: "出品番号", url: "出品ページ", pauseUntil: "休止の終了", tracking: "追跡中", queue: "補正待ち", since: "集計開始", waitMs2: "待機" };
+const COLO_NAME = { NRT: "東京", KIX: "大阪", FUK: "福岡", OKA: "那覇", ICN: "ソウル", TPE: "台北", HKG: "香港", SIN: "シンガポール", BKK: "バンコク", MNL: "マニラ", SYD: "シドニー", MEL: "メルボルン", BNE: "ブリスベン", LAX: "ロサンゼルス", SJC: "サンノゼ", SEA: "シアトル", DFW: "ダラス", ORD: "シカゴ", DEN: "デンバー", ATL: "アトランタ", MIA: "マイアミ", IAD: "ワシントン", EWR: "ニューアーク", LHR: "ロンドン", FRA: "フランクフルト", AMS: "アムステルダム", CDG: "パリ" };
+const OPS_KEY = { path: "アクセス先", method: "方式", status: "応答コード", ms: "所要(ミリ秒)", bytes: "データ量", type: "データの種類", location: "転送先", cfRay: "Cloudflare識別番号", cfCache: "キャッシュ", cfMitigated: "Cloudflareの防御", via: "経由", colo: "拠点", loc: "国", setCookie: "Cookieの更新", waitMs: "待機(ミリ秒)", cookie: "ログイン情報の送信", ua: "名乗り", sendHeaders: "送ったヘッダー", bodyBytes: "送信データ量", todayCount: "今日の通信回数", error: "エラー内容", kind: "エラーの種類", stack: "発生箇所", productId: "商品番号", chatId: "チャット番号", unread: "未読", id: "商品番号", price: "価格", state: "状態", times: "時刻", keys: "変更項目", listingId: "出品番号", url: "出品ページ", pauseUntil: "休止の終了", tracking: "追跡中", queue: "補正待ち", since: "集計開始", waitMs2: "待機" };
 
 // ---- 設定 ----
 function renderSettings() {
@@ -1053,9 +1054,37 @@ function renderSettings() {
         ブラウザでログアウトすると無効になります。普段どおり放置すれば長期間有効です。
       </div></details>
     </div>
+    <div class="card">
+      <h2>通信の出どころテスト</h2>
+      <div class="muted" style="margin-bottom:10px">ゲームクラブは日本以外からのアクセスを確認画面で止めるため、ツールは「保存領域」(場所が固定されている部分)から通信します。このボタンで、保存領域がどこの拠点にあるかと、そこからゲームクラブに通れるか(ログインなしのトップページを各1回だけ読みます)を確かめ、日本から通れるものを自動で選びます。<b>新しくした直後に一度押してください。</b></div>
+      <button class="btn" id="st_origin">通信の出どころテスト</button>
+      <div id="st_originMsg" style="margin-top:12px"></div>
+    </div>
   \`;
   $("#st_sessSave").onclick = async () => { const v = $("#st_sess").value.trim(); if (!v) return toast("値を入力してください", true); try { await api("/session", { method: "POST", body: JSON.stringify({ phpsessid: v }) }); toast("保存しました"); $("#st_sess").value = ""; refresh(); } catch (e) { toast(e.message, true); } };
   if ($("#st_sessDel")) $("#st_sessDel").onclick = async () => { if (!confirm("削除しますか?")) return; await api("/session", { method: "DELETE" }); toast("削除しました"); refresh(); };
+  $("#st_origin").onclick = async (e) => {
+    e.target.disabled = true; $("#st_originMsg").innerHTML = '<span class="muted">確認中…(10秒ほどかかります)</span>';
+    try {
+      const r = await api("/origin", { method: "POST", body: "{}" });
+      const name = (c) => (COLO_NAME[c] ? \`\${c}(\${COLO_NAME[c]})\` : c || "不明");
+      const rows = r.results.map((x) => {
+        const g = x.gc;
+        const gLine = g.error ? \`<span class="bad">通信エラー: \${esc(g.error)}</span>\`
+          : g.challenge ? \`<span class="bad">✕ 確認画面で止められました(応答\${g.status}・出どころ \${esc(name(g.colo))})</span>\`
+          : g.status === 200 ? \`<span class="okc">✓ 通れました(応答200・\${g.ms}ms・出どころ \${esc(name(g.colo))})</span>\`
+          : \`<span class="bad">想定外の応答 \${g.status}(出どころ \${esc(name(g.colo))})</span>\`;
+        const label = x.name === "main" ? "データ本体の保存領域" : "中継専用の保存領域";
+        return \`<dt>\${label}</dt><dd>拠点 \${esc(name(x.where.colo))}\${x.where.loc ? \` ・ 国 \${esc(x.where.loc)}\` : ""}\${x.where.error ? \` ・ \${esc(x.where.error)}\` : ""}<br>\${gLine}\${r.chosen === x.name && r.ok ? ' <span class="pill ok">使用中</span>' : ""}</dd>\`;
+      }).join("");
+      const verdict = r.ok
+        ? \`<div class="banner info" style="margin:10px 0 0"><div><b>日本から通信できています。</b>自動出品・売れ行き確認も、この「\${r.chosen === "main" ? "データ本体" : "中継専用"}の保存領域」から通信します\${r.changed ? "(今回切り替えました)" : ""}。</div></div>\`
+        : '<div class="banner warn" style="margin:10px 0 0"><div><b>日本から通れる保存領域が見つかりませんでした。</b>この結果のスクショを送ってください。別の方法を考えます。</div></div>';
+      window.Snd && (r.ok ? Snd.success() : Snd.fail());
+      $("#st_originMsg").innerHTML = \`<dl class="dl">\${rows}</dl>\${verdict}\`;
+    } catch (err) { $("#st_originMsg").textContent = err.message; }
+    e.target.disabled = false;
+  };
   $("#st_test").onclick = async (e) => { e.target.disabled = true; $("#st_testMsg").textContent = "確認中…"; try { const r = await api("/test", { method: "POST", body: "{}" }); window.Snd&&(r.ok?Snd.success():Snd.fail()); $("#st_testMsg").innerHTML = \`<span style="color:var(--\${r.ok ? "ok" : "bad"})">\${r.ok ? "✓ " : "✕ "}\${esc(r.message)}</span>\`; } catch (err) { $("#st_testMsg").textContent = err.message; } e.target.disabled = false; };
 }
 

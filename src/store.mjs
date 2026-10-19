@@ -24,6 +24,38 @@ export class GcStore extends DurableObject {
   async webSocketError(ws) { try { ws.close(1011, "error"); } catch {} }
   // 今つながっている画面の数(誰も見ていなければ、1行ずつの即時配信をしない)
   async viewers() { return this.ctx.getWebSockets().length; }
+
+  // ===== ゲームクラブへの通信の中継 =====
+  // ゲームクラブは日本以外からのアクセスを確認画面で止めるため、
+  // 自動実行(世界中のどこかの拠点で動く)からは直接通信せず、
+  // 場所が固定されている保存領域から通信する。
+  // どの保存領域から出すか(net:relay)は「通信の出どころテスト」で日本にあると確かめたものを使う:
+  //   "main"     = この保存領域(データ本体)
+  //   "relay-jp" = 中継専用の保存領域(画面=東京から初めて作り、アジア寄りを指定)
+  async relayFetch(url, init = {}) {
+    const target = (await this.ctx.storage.get("net:relay")) || "main";
+    if (target !== "main" && this.env && this.env.GC_STORE) {
+      const ns = this.env.GC_STORE;
+      return ns.get(ns.idFromName(target), { locationHint: "apac" }).relayHere(url, init);
+    }
+    return this.relayHere(url, init);
+  }
+  // この保存領域から実際に通信する
+  async relayHere(url, init = {}) {
+    const res = await fetch(url, init);
+    const nullBody = [101, 204, 205, 304].includes(res.status);
+    const body = nullBody ? null : await res.arrayBuffer();
+    return { status: res.status, statusText: res.statusText, headers: [...res.headers], body };
+  }
+  // この保存領域が、どこのCloudflare拠点から通信しているか(IPアドレスは返さない)
+  async whereAmI() {
+    try {
+      const r = await fetch("https://www.cloudflare.com/cdn-cgi/trace");
+      const t = await r.text();
+      const g = (k) => (t.match(new RegExp("^" + k + "=(.*)$", "m")) || [])[1] || "";
+      return { colo: g("colo"), loc: g("loc") };
+    } catch (e) { return { error: e.message }; }
+  }
   broadcast(obj) {
     const socks = this.ctx.getWebSockets();
     if (!socks.length) return 0;

@@ -111,9 +111,51 @@ async function handleApi(request, env, path) {
     if (method === "POST" && sub[0] === "test") {
       const secret = await load(env, "secret");
       if (!secret.phpsessid) throw new Error("先に設定タブでPHPSESSIDを登録してください。");
-      const r = await testConnection(secret.phpsessid);
-      await adminLog(env, `接続テスト: ${r.ok ? "成功" : "失敗"} - ${r.message}`, { status: r.status });
+      // 自動実行と同じく、保存領域から通信する(=本番と同じ経路を確かめる)
+      const { relay } = await import("./net.mjs");
+      const st = db(env);
+      const r = await testConnection(secret.phpsessid, { fetcher: (u, i) => relay(st, u, i) });
+      await adminLog(env, `接続テスト: ${r.ok ? "成功" : "失敗"} - ${r.message}`, { status: r.status, colo: r.colo });
       return json(r);
+    }
+    // ===== 通信の出どころテスト =====
+    // 保存領域がどこの拠点にあるかと、そこからゲームクラブ(ログインなしのトップページ)に通れるかを確かめる。
+    // 候補は2つ: データ本体の保存領域(main)と、中継専用の保存領域(relay-jp。画面=東京から初めて作るのでアジアに置かれる見込み)。
+    // 日本にあって通れたほうを、以後の通信の出どころにする。休止中でも各1回だけ通信する(確認用)。
+    if (method === "POST" && sub[0] === "origin") {
+      const { GC, UA } = await import("./gc.mjs");
+      const main = db(env);
+      const ns = env.GC_STORE;
+      const cands = [["main", main]];
+      if (ns && !env.__db) cands.push(["relay-jp", ns.get(ns.idFromName("relay-jp"), { locationHint: "apac" })]);
+      else if (env.__relay) cands.push(["relay-jp", env.__relay]);
+      const JP = ["NRT", "KIX", "FUK", "OKA"];
+      const results = [];
+      for (const [name, st] of cands) {
+        const where = await st.whereAmI();
+        const t0 = Date.now();
+        let gc;
+        try {
+          const r = await st.relayHere(GC + "/", { redirect: "manual", headers: { "User-Agent": UA, "Accept-Language": "ja", Accept: "text/html" } });
+          const text = r.body ? new TextDecoder().decode(r.body) : "";
+          const h = new Headers(r.headers);
+          const ray = h.get("cf-ray") || "";
+          const challenge = !!h.get("cf-mitigated") || /Just a moment|cf-chl|challenge-platform|Attention Required/i.test(text);
+          gc = { status: r.status, ray, colo: ray.split("-").pop() || "", challenge, ms: Date.now() - t0 };
+        } catch (e) { gc = { error: e.message }; }
+        const ok = gc.status === 200 && !gc.challenge;
+        const inJp = JP.includes(gc.colo) || JP.includes(where.colo) || where.loc === "JP";
+        results.push({ name, where, gc, ok, inJp });
+        await adminLog(env, `通信の出どころテスト[${name === "main" ? "データ本体" : "中継専用"}]: 拠点=${where.colo || "不明"}(${where.loc || "?"}) / ゲームクラブ=${gc.error ? "通信エラー" : `応答${gc.status}${gc.challenge ? "・確認画面" : ""}`}(出どころ ${gc.colo || "?"})`, { colo: where.colo, loc: where.loc, status: gc.status, cfRay: gc.ray });
+      }
+      const prev = (await main.get("net:relay")) || "main";
+      const best = results.find((x) => x.ok && x.inJp) || null;
+      const chosen = best ? best.name : prev;
+      if (best && chosen !== prev) await main.put("net:relay", chosen);
+      // 日本から通れると確かめられたので、海外から止められて入っていた休止は解除する
+      if (best && ((await main.get("net:pauseUntil")) || 0) > Date.now()) { await main.put("net:pauseUntil", 0); await adminLog(env, "日本から通れることを確認したため、通信の休止を解除しました"); }
+      await adminLog(env, best ? `以後のゲームクラブへの通信は「${chosen === "main" ? "データ本体の保存領域" : "中継専用の保存領域"}」(${best.gc.colo})から出します` : `日本から通れる保存領域が見つからなかったため、通信の出どころは変更しません(現在: ${prev})`);
+      return json({ ok: !!best, chosen, changed: !!best && chosen !== prev, results });
     }
     if (method === "POST" && sub[0] === "publish") return json(await publishNext(env, { draftKey: body.key || null, manual: true }));
     if (method === "POST" && sub[0] === "alert" && sub[1] === "clear") { const state = await load(env, "state"); state.alert = null; await save(env, "state", state); return json({ ok: true }); }

@@ -19,6 +19,15 @@ const kb = (n) => (n >= 1024 ? (n / 1024).toFixed(1) + "KB" : n + "B");
 
 export class PausedError extends Error {}
 
+// ゲームクラブへの通信は、保存領域(Durable Object)に中継してもらう。
+// 保存領域は場所が固定されている(日本にある見込み)ため、日本以外を止める設定でも通れる。
+// テスト用の保存領域(relayFetchを持たない)のときは、そのまま通信する。
+export async function relay(store, url, init = {}) {
+  if (!store || typeof store.relayFetch !== "function") return fetch(url, init);
+  const r = await store.relayFetch(String(url), init);
+  return new Response(r.body, { status: r.status, statusText: r.statusText, headers: r.headers });
+}
+
 export function createFetcher(store, log, { gap = true } = {}) {
   let last = 0, checked = false, pauseUntil = 0, counter = null, made = 0;
 
@@ -65,11 +74,12 @@ export function createFetcher(store, log, { gap = true } = {}) {
       sendHeaders: Object.keys(hdrs).filter((k) => k !== "Cookie").join(", "),
       bodyBytes: init_.body ? (init_.body.byteLength ?? String(init_.body).length) : 0,
       todayCount: counter.n,
+      via: "保存領域(場所固定)",
     };
     const t0 = Date.now();
     let res;
     try {
-      res = await fetch(url, init_);
+      res = await relay(store, url, init_);
     } catch (e) {
       last = Date.now();
       log.error(cat, `通信エラー(届きませんでした): ${meta.what || path}`, { ...reqInfo, ms: Date.now() - t0, ...errInfo(e) });
