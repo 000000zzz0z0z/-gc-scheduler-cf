@@ -335,6 +335,81 @@ async function handleApi(request, env, path, baseEnv = env) {
       return json({ ok: true, ...r });
     }
 
+    // ===== 説明文の一括書き換え(ゲームクラブ・M&Aクラブの両方) =====
+    // 選んだ下書きの「説明文(detail)」だけを、同じ文章に置き換える。商品名・価格・画像などは変えない。
+    // 書き換える前の説明文はサイトごとに "bulk:undo" に1回分だけ取っておき、「元に戻す」で戻せる。
+    if (sub[0] === "bulk-detail") {
+      const { EDITABLE_LIMITS } = await import("./gc.mjs");
+      const detailOf = (d) => d.fields.find((f) => f.name === "detail" && !f.file);
+      if (method === "GET") {
+        const out = {};
+        let undo = null;
+        for (const id of SITE_IDS) {
+          const e = siteEnv(baseEnv, id);
+          const [drafts, u] = await Promise.all([load(e, "drafts"), db(e).get("bulk:undo")]);
+          out[id] = drafts.map((d) => ({ key: d.key, label: d.label, title: (d.fields.find((f) => f.name === "name") || {}).value || "", enabled: d.enabled, detail: detailOf(d) ? detailOf(d).value : null }));
+          if (u && u.items && u.items.length) undo = { op: u.op, at: u.at, count: (undo && undo.op === u.op ? undo.count : 0) + u.items.length };
+        }
+        return json({ ok: true, sites: out, undo, max: EDITABLE_LIMITS.detail });
+      }
+      if (method === "POST" && sub.length === 1) {
+        const text = String(body.text ?? "").replace(/\r\n?/g, "\n");
+        if (!text.trim()) throw new Error("新しい説明文を入力してください。");
+        if (text.length > EDITABLE_LIMITS.detail) throw new Error(`説明文が長すぎます(${text.length}文字・上限${EDITABLE_LIMITS.detail}文字)。`);
+        const targets = body.targets && typeof body.targets === "object" ? body.targets : {};
+        const total = SITE_IDS.reduce((n, id) => n + (Array.isArray(targets[id]) ? targets[id].length : 0), 0);
+        if (!total) throw new Error("書き換える下書きを1つ以上選んでください。");
+        const op = uuid(), now = Date.now(), result = {};
+        for (const id of SITE_IDS) {
+          const keys = new Set(Array.isArray(targets[id]) ? targets[id] : []);
+          const e = siteEnv(baseEnv, id);
+          if (!keys.size) { result[id] = { changed: 0, same: 0, missing: 0 }; continue; }
+          const drafts = await load(e, "drafts");
+          const items = [];
+          let same = 0, missing = 0;
+          for (const d of drafts) {
+            if (!keys.has(d.key)) continue;
+            const f = detailOf(d);
+            if (!f) { missing++; continue; }
+            if (f.value === text) { same++; continue; }
+            items.push({ key: d.key, label: d.label, before: f.value });
+            f.value = text;
+            d.updatedAt = now;
+          }
+          // 書き換えたサイトは「元に戻す」の記録を今回の分に入れ替える。書き換えがなかったサイトは前の記録を消す(古い記録で戻さないため)
+          await Promise.all([save(e, "drafts", drafts), db(e).put("bulk:undo", items.length ? { op, at: now, text, items } : null)]);
+          if (items.length) await adminLog(e, `説明文を一括で書き換えました(${items.length}件)`, { 下書き: items.map((x) => x.label).join(", "), 新しい説明文の文字数: text.length, 同じ内容のため変更なし: same || undefined, 説明文の欄がない: missing || undefined });
+          result[id] = { changed: items.length, same, missing };
+        }
+        // 選ばれていないサイトの古い「元に戻す」記録も消す(戻す対象を今回の1回分にそろえる)
+        for (const id of SITE_IDS) if (!(Array.isArray(targets[id]) && targets[id].length)) await db(siteEnv(baseEnv, id)).put("bulk:undo", null);
+        return json({ ok: true, op, result, changed: SITE_IDS.reduce((n, id) => n + result[id].changed, 0) });
+      }
+      if (method === "POST" && sub[1] === "undo") {
+        const result = {};
+        let restored = 0, skipped = 0;
+        for (const id of SITE_IDS) {
+          const e = siteEnv(baseEnv, id);
+          const u = await db(e).get("bulk:undo");
+          if (!u || !u.items || !u.items.length) { result[id] = { restored: 0, skipped: [] }; continue; }
+          const drafts = await load(e, "drafts");
+          const r = { restored: 0, skipped: [] };
+          for (const it of u.items) {
+            const d = drafts.find((x) => x.key === it.key);
+            const f = d && detailOf(d);
+            // 一括書き換えの後に、画面で個別に直した下書きは戻さない(その人の編集を消さないため)
+            if (!f) { r.skipped.push(`${it.label}(削除済み)`); continue; }
+            if (f.value !== u.text) { r.skipped.push(`${d.label}(あとから編集済み)`); continue; }
+            f.value = it.before; d.updatedAt = Date.now(); r.restored++;
+          }
+          await Promise.all([save(e, "drafts", drafts), db(e).put("bulk:undo", null)]);
+          await adminLog(e, `説明文の一括書き換えを元に戻しました(${r.restored}件)`, r.skipped.length ? { 戻さなかった下書き: r.skipped.join(", ") } : undefined);
+          result[id] = r; restored += r.restored; skipped += r.skipped.length;
+        }
+        return json({ ok: true, restored, skipped, result });
+      }
+    }
+
     // ===== 両サイトの状態をまとめて(画面上部の切り替えボタン用) =====
     if (method === "GET" && sub[0] === "overview") {
       const { netStatus } = await import("./net.mjs");

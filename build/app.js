@@ -310,6 +310,11 @@ function renderDrafts() {
     </div>`;
   }).join("");
   $("#tab-drafts").innerHTML = `
+    <div class="card bulkcard">
+      <h2>説明文をまとめて書き換え <span class="q">ゲームクラブ・M&Aクラブの両方</span></h2>
+      <div class="muted" style="margin-bottom:10px">選んだ下書きの説明文を、同じ文章に置き換えます。商品名・価格・画像は変わりません。すでに出品済みの商品は変わらず、次の出品から新しい説明文になります。</div>
+      <div class="row"><button class="btn p" id="bk_open">書き換える下書きを選ぶ</button><span id="bk_undo"></span></div>
+    </div>
     <div class="card">
       <h2>下書き一覧 <span class="q">上から順に出品されます</span></h2>
       ${state.drafts.length ? `<div class="muted dhint">文章や価格を変えるときは「編集」、似た商品を増やすときは「複製」を押してください。</div><div id="draftList">${list}</div>` : `<div class='center'>まだ${esc(SN())}の下書きが登録されていません。<br>下の「Payloadを貼り付けて追加」から1つ登録すると、あとは画面で編集・複製できます。</div>`}
@@ -321,6 +326,8 @@ function renderDrafts() {
   bindAddForm();
   bindDraftActs();
   bindDrag();
+  $("#bk_open").onclick = () => openBulk();
+  drawBulkUndo();
 }
 
 function addFormHtml() {
@@ -1096,11 +1103,12 @@ function closeEditor(force) {
   document.body.classList.remove("ed-open");
 }
 document.addEventListener("keydown", (e) => {
+  if (bulk && e.key === "Escape") { e.preventDefault(); closeBulk(); return; }
   if (!editor) return;
   if (e.key === "Escape") { e.preventDefault(); closeEditor(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveEditor(editor.copy); }
 });
-window.addEventListener("beforeunload", (e) => { if (editor && editor.dirty()) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("beforeunload", (e) => { if ((editor && editor.dirty()) || (bulk && bulk.dirty())) { e.preventDefault(); e.returnValue = ""; } });
 
 // ---- 旧M&Aクラブ版からの引っ越し(設定タブ・M&Aクラブのときだけ) ----
 function migrateCardHtml() {
@@ -1141,6 +1149,146 @@ async function bindMigrate() {
       refresh(); loadOverview();
     } catch (err) { $("#mg_msg").innerHTML = `<span class="bad">${esc(err.message)}</span>`; e.target.disabled = false; }
   };
+}
+
+
+// ===================================================================
+// ---- 説明文の一括書き換え(両サイト) ----
+// 手順: ①新しい説明文を書く・書き換える下書きを選ぶ → ②変更前と変更後を確認 → 書き換える
+// ===================================================================
+let bulk = null;
+const firstLines = (t, n = 2) => { const a = String(t || "").split("\n"); return a.slice(0, n).join(" / ") + (a.length > n ? " …" : ""); };
+
+async function drawBulkUndo() {
+  const el = $("#bk_undo"); if (!el) return;
+  try {
+    const d = await api("/bulk-detail");
+    if (!el.isConnected) return;
+    el.innerHTML = d.undo ? `<button class="btn gho sm" id="bk_undo_b">直前の一括書き換え(${fmtDate(d.undo.at)}・${d.undo.count}件)を元に戻す</button>` : "";
+    const b = $("#bk_undo_b");
+    if (b) b.onclick = async () => {
+      if (!confirm(`${fmtDate(d.undo.at)} の一括書き換え(${d.undo.count}件)を元に戻しますか?\nそのあと個別に直した下書きは、そのまま残します。`)) return;
+      b.disabled = true;
+      try {
+        const r = await api("/bulk-detail/undo", { method: "POST", body: "{}" });
+        toast(r.skipped ? `${r.restored}件を元に戻しました(あとから直した${r.skipped}件はそのまま)` : `${r.restored}件を元に戻しました`);
+        refresh();
+      } catch (e) { toast(e.message, true); b.disabled = false; }
+    };
+  } catch {}
+}
+
+async function openBulk() {
+  let d;
+  try { d = await api("/bulk-detail"); } catch (e) { return toast(e.message, true); }
+  const sel = {};
+  for (const id of Object.keys(SITE_INFO)) sel[id] = new Set((d.sites[id] || []).filter((x) => x.detail !== null).map((x) => x.key));
+  bulk = { data: d, sel, text: "", step: 1, init: "", dirty: () => !!bulk && (bulk.text || ($("#bk_text") ? $("#bk_text").value : "")).trim() !== "" };
+  renderBulk();
+}
+
+function bulkTargets() {
+  const out = {};
+  for (const id of Object.keys(SITE_INFO)) out[id] = [...bulk.sel[id]];
+  return out;
+}
+
+function renderBulk() {
+  const b = bulk, d = b.data;
+  const count = Object.values(b.sel).reduce((n, x) => n + x.size, 0);
+  let body, foot;
+  if (b.step === 1) {
+    const all = Object.entries(SITE_INFO).flatMap(([id, info]) => (d.sites[id] || []).filter((x) => x.detail !== null).map((x) => `<option value="${id}:${esc(x.key)}">${esc(info.name)} ・ ${esc(x.label)}</option>`)).join("");
+    const lists = Object.entries(SITE_INFO).map(([id, info]) => {
+      const rows = (d.sites[id] || []).map((x) => x.detail === null
+        ? `<label class="bk-i dis"><input type="checkbox" disabled><span><b>${esc(x.label)}</b><small>説明文の欄がないため対象外</small></span></label>`
+        : `<label class="bk-i"><input type="checkbox" data-s="${id}" data-k="${esc(x.key)}" ${b.sel[id].has(x.key) ? "checked" : ""}><span><span class="bk-t"><b>${esc(x.label)}</b>${x.enabled ? "" : '<span class="pill off">無効</span>'}</span><small>${esc(firstLines(x.detail, 1)) || "(説明文が空)"}</small></span></label>`).join("");
+      return `<div class="bk-site ${id}"><div class="bk-sh"><span>${esc(info.name)}</span><span class="bk-n">${b.sel[id].size} / ${(d.sites[id] || []).filter((x) => x.detail !== null).length}件</span><button class="btn gho sm" data-all="${id}">全部選ぶ</button><button class="btn gho sm" data-none="${id}">全部外す</button></div>${rows || '<div class="muted bk-empty">下書きがありません</div>'}</div>`;
+    }).join("");
+    body = `
+      <div class="ed-f">
+        <label for="bk_text">新しい説明文<span class="ed-count" id="bk_cnt"></span></label>
+        <textarea id="bk_text" class="ed-long" rows="12" placeholder="ここに書いた文章が、選んだ下書きすべての説明文になります。改行もそのまま反映されます。">${esc(b.text)}</textarea>
+        ${all ? `<div class="bk-from"><span class="muted">今の説明文から書き始める:</span><select id="bk_from"><option value="">下書きを選ぶ</option>${all}</select></div>` : ""}
+      </div>
+      <div class="ed-f"><label>書き換える下書き<span class="ed-note">最初は全部選ばれています</span></label>${lists}</div>`;
+    foot = `<div class="ed-msg" id="ed_msg" aria-live="polite">${count}件を選択中</div>
+      <button class="btn gho" id="bk_cancel">キャンセル</button>
+      <button class="btn p" id="bk_next">確認する</button>`;
+  } else {
+    const items = Object.entries(SITE_INFO).flatMap(([id, info]) => (d.sites[id] || []).filter((x) => b.sel[id].has(x.key)).map((x) => ({ id, info, x })));
+    const changed = items.filter((it) => it.x.detail !== b.text);
+    const same = items.length - changed.length;
+    body = `
+      <div class="banner ${changed.length ? "info" : "warn"}" style="margin:0 0 14px"><div><b>${changed.length}件</b>の説明文を書き換えます${same ? `(${same}件はすでに同じ文章なので変わりません)` : ""}。商品名・価格・画像は変わりません。すでに出品済みの商品はそのままで、次の出品から新しい説明文になります。</div></div>
+      <div class="ed-f"><label>新しい説明文<span class="ed-count">${b.text.length}文字</span></label><pre class="bk-pre">${esc(b.text)}</pre></div>
+      <div class="ed-f"><label>書き換える下書き</label>
+        ${items.map((it) => `<div class="bk-cmp ${it.id}"><div class="bk-ch"><span class="bk-tag ${it.id}">${esc(it.info.name)}</span><b>${esc(it.x.label)}</b></div>${it.x.detail === b.text ? '<div class="muted">同じ文章なので変わりません</div>' : `<div class="bk-before"><i>変更前</i>${esc(firstLines(it.x.detail, 3)) || "(空)"}</div>`}</div>`).join("")}
+      </div>`;
+    foot = `<div class="ed-msg" id="ed_msg" aria-live="polite"></div>
+      <button class="btn gho" id="bk_back">戻って直す</button>
+      <button class="btn p" id="bk_go" ${changed.length ? "" : "disabled"}>${changed.length}件を書き換える</button>`;
+  }
+  $("#sheet").innerHTML = `
+    <div class="ed-back"></div>
+    <div class="ed" role="dialog" aria-modal="true" aria-labelledby="bk_title">
+      <div class="ed-head">
+        <div><div class="ed-site">ゲームクラブ・M&Aクラブ</div><h2 id="bk_title">${b.step === 1 ? "説明文をまとめて書き換え" : "書き換える前の確認"}</h2></div>
+        <button class="btn gho sm" id="bk_x" aria-label="閉じる">閉じる</button>
+      </div>
+      <div class="ed-body">${body}</div>
+      <div class="ed-foot">${foot}</div>
+    </div>`;
+  document.body.classList.add("ed-open");
+  $("#bk_x").onclick = () => closeBulk();
+  $(".ed-back").onclick = () => closeBulk();
+  if (b.step === 1) {
+    const ta = $("#bk_text"), cnt = $("#bk_cnt");
+    const upd = () => { b.text = ta.value; cnt.textContent = `${ta.value.length}文字`; };
+    ta.addEventListener("input", upd); upd();
+    const from = $("#bk_from");
+    if (from) from.onchange = () => {
+      if (!from.value) return;
+      const [id, key] = [from.value.slice(0, from.value.indexOf(":")), from.value.slice(from.value.indexOf(":") + 1)];
+      const x = (d.sites[id] || []).find((y) => y.key === key);
+      if (x && (!ta.value.trim() || confirm("入力中の文章を、この下書きの説明文で置き換えますか?"))) { ta.value = x.detail || ""; upd(); ta.focus(); }
+      from.value = "";
+    };
+    const sync = () => { const n = Object.values(b.sel).reduce((a, x) => a + x.size, 0); $("#ed_msg").textContent = `${n}件を選択中`; $$(".bk-site").forEach((el) => { const id = el.classList.contains("mac") ? "mac" : "gc"; el.querySelector(".bk-n").textContent = `${b.sel[id].size} / ${(d.sites[id] || []).filter((x) => x.detail !== null).length}件`; }); };
+    $$("#sheet [data-k]").forEach((cb) => (cb.onchange = () => { const set = b.sel[cb.dataset.s]; cb.checked ? set.add(cb.dataset.k) : set.delete(cb.dataset.k); sync(); }));
+    $$("#sheet [data-all],#sheet [data-none]").forEach((bt) => (bt.onclick = (e) => {
+      e.preventDefault();
+      const id = bt.dataset.all || bt.dataset.none, on = !!bt.dataset.all;
+      $$(`#sheet [data-s="${id}"]`).forEach((cb) => { cb.checked = on; on ? b.sel[id].add(cb.dataset.k) : b.sel[id].delete(cb.dataset.k); });
+      sync();
+    }));
+    $("#bk_cancel").onclick = () => closeBulk();
+    $("#bk_next").onclick = () => {
+      const t = ta.value.replace(/\r\n?/g, "\n");
+      if (!t.trim()) return editorError("新しい説明文を入力してください。", "#bk_text");
+      if (t.length > d.max) return editorError(`説明文が長すぎます(${t.length}文字・上限${d.max}文字)。`, "#bk_text");
+      if (!Object.values(b.sel).some((x) => x.size)) return editorError("書き換える下書きを1つ以上選んでください。");
+      b.text = t; b.step = 2; renderBulk();
+      $(".ed-body").scrollTop = 0;
+    };
+  } else {
+    $("#bk_back").onclick = () => { b.step = 1; renderBulk(); };
+    $("#bk_go").onclick = async (e) => {
+      $$("#sheet .ed-foot .btn").forEach((x) => (x.disabled = true));
+      try {
+        const r = await api("/bulk-detail", { method: "POST", body: JSON.stringify({ text: b.text, targets: bulkTargets() }) });
+        toast(`${r.changed}件の説明文を書き換えました`);
+        closeBulk(true); refresh();
+      } catch (err) { $$("#sheet .ed-foot .btn").forEach((x) => (x.disabled = false)); editorError(err.message); }
+    };
+  }
+}
+function closeBulk(force) {
+  if (!bulk) return;
+  if (!force && bulk.dirty() && !confirm("入力した説明文は保存されていません。破棄して閉じますか?")) return;
+  bulk = null;
+  $("#sheet").innerHTML = "";
+  document.body.classList.remove("ed-open");
 }
 
 if (pw) { fetch("/api/state", { headers: { "x-admin-key": encodeURIComponent(pw), "x-site": site } }).then((r) => { if (r.ok) start(); else { sessionStorage.removeItem(KEY); } }); }

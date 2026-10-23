@@ -432,3 +432,34 @@ body.ed-open{overflow:hidden}
   .site-b{padding:10px 12px}.site-b .site-n{font-size:15px}
 }
 @media (prefers-reduced-motion:reduce){.ed{animation:none}body{transition:none}}
+
+/* ===== 説明文の一括書き換え ===== */
+.bulkcard .row{align-items:center;gap:10px}
+.bk-from{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px;font-size:13px}
+.bk-from select{flex:1 1 220px;max-width:100%}
+.bk-site{border:1px solid var(--line);border-radius:var(--r2);margin-bottom:12px;overflow:hidden;background:rgba(var(--deep3),.35)}
+.bk-site.gc{border-left:3px solid #39ff8b}
+.bk-site.mac{border-left:3px solid #ff6ec7}
+.bk-sh{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);font-weight:700;font-size:14px}
+.bk-sh .bk-n{color:var(--mut);font-weight:400;font-size:12.5px;margin-right:auto;font-variant-numeric:tabular-nums}
+.bk-i{display:flex;gap:10px;align-items:flex-start;padding:9px 12px;cursor:pointer;border-top:1px solid rgba(255,255,255,.04);font-weight:400}
+.bk-i:first-of-type{border-top:0}
+.bk-i:hover{background:rgba(255,255,255,.025)}
+.bk-i input{width:18px;height:18px;margin-top:2px;flex:0 0 auto;accent-color:var(--green)}
+.bk-i span{min-width:0;display:flex;flex-direction:column}
+.bk-i b{font-size:14px;color:var(--ink)}
+.bk-i small{color:var(--mut);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bk-i.dis{opacity:.5;cursor:default}
+.bk-empty{padding:10px 12px;font-size:13px}
+.bk-pre{white-space:pre-wrap;word-break:break-word;margin:0;padding:12px 14px;border:1px solid rgba(var(--g3),.35);border-radius:var(--r2);background:rgba(var(--deep3),.6);font:inherit;font-size:14px;line-height:1.7;max-height:16em;overflow:auto}
+.bk-cmp{padding:9px 12px;border:1px solid var(--line);border-radius:var(--r2);margin-bottom:8px;font-size:13px}
+.bk-ch{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.bk-ch b{font-size:14px}
+.bk-tag{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid}
+.bk-tag.gc{color:#39ff8b;border-color:rgba(57,255,139,.5)}
+.bk-tag.mac{color:#ff6ec7;border-color:rgba(255,110,199,.5)}
+.bk-before{color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bk-before i{font-style:normal;font-size:11px;border:1px solid var(--line);border-radius:6px;padding:0 6px;margin-right:6px}
+.bk-i .bk-t{display:flex;flex-direction:row;align-items:center;gap:8px;flex-wrap:wrap}
+.bk-i .bk-t .pill{font-size:11px}
+.bk-i small{font-weight:400}
