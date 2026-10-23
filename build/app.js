@@ -6,6 +6,18 @@ const pad = (n) => String(n).padStart(2, "0");
 const KEY = "gc_admin_key";
 let state = null, logs = null, tab = "home", pw = sessionStorage.getItem(KEY) || "";
 
+// ===== どちらのサイトを操作しているか =====
+// 選んだサイトはこの端末に覚えておく(次に開いたときも同じサイトから)
+const SITE_INFO = {
+  gc: { name: "ゲームクラブ", origin: "https://gameclub.jp", rule: "1日15回・前回から30分" },
+  mac: { name: "M&Aクラブ", origin: "https://maclub.jp", rule: "1日5回・前回から31分" },
+};
+const SITE_KEY = "gc_site";
+let site = (() => { try { const v = localStorage.getItem(SITE_KEY); return SITE_INFO[v] ? v : "gc"; } catch { return "gc"; } })();
+const SN = () => SITE_INFO[site].name;
+let overview = null;
+document.body.classList.add("site-" + site);
+
 function hm2str(m) { return `${Math.floor(m / 60)}:${pad(m % 60)}`; }
 // ===== 時刻はすべて「サーバー(インターネット)の時計」×「日本時間」で扱う =====
 // 端末の時計がずれていても影響しないよう、サーバーの現在時刻との差を記録して補正します。
@@ -23,7 +35,7 @@ function toast(msg, bad) {
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch("/api" + path, { ...opts, headers: { "Content-Type": "application/json", "x-admin-key": encodeURIComponent(pw), ...(opts.headers || {}) } });
+  const res = await fetch("/api" + path, { ...opts, headers: { "Content-Type": "application/json", "x-admin-key": encodeURIComponent(pw), "x-site": site, ...(opts.headers || {}) } });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) { sessionStorage.removeItem(KEY); location.reload(); throw new Error("auth"); }
   if (!res.ok) throw new Error(data.error || `エラー(${res.status})`);
@@ -55,7 +67,8 @@ function start() {
   $("#app").classList.remove("hide");
   $$(".tabs button").forEach((b) => (b.onclick = () => switchTab(b.dataset.tab)));
   refresh();
-  setInterval(() => { if (!document.hidden) refresh(true); }, 30000);
+  loadOverview();
+  setInterval(() => { if (!document.hidden) { refresh(true); loadOverview(); } }, 30000);
   document.addEventListener("click",(e)=>{ const b=e.target.closest("button"); if(b && !b.disabled && window.Snd) Snd.click(); },true);
 }
 function switchTab(t) {
@@ -76,11 +89,12 @@ async function refresh(quiet) {
     clockOffset = state.now - Math.round((t0 + Date.now()) / 2); // 通信にかかった時間の半分を補正
     if (tab === "home") { if (!logs || !quiet) logs = (await api("/logs")).logs; }
     if ((tab === "analysis" || tab === "schedule") && !quiet) await loadAnalysis();
-    render();
+    quietRender = !!quiet; render(); quietRender = false;
   } catch (e) { if (!quiet) toast(e.message, true); }
 }
 async function loadLogs() { logs = (await api("/logs")).logs; }
 
+let quietRender = false;
 function render() {
   if (!state) return;
   const s = state.settings;
@@ -94,7 +108,7 @@ function render() {
   if (tab === "schedule") renderSchedule();
   if (tab === "analysis") renderAnalysis();
   if (tab === "logs" && !$("#ops_list")) renderLogs();
-  if (tab === "settings") renderSettings();
+  if (tab === "settings" && (!$("#tab-settings").children.length || !quietRender)) renderSettings();
 }
 
 function tickClock() {
@@ -112,15 +126,15 @@ function renderBanners() {
     b.innerHTML += `<div class="banner ${cls}"><div><b>${a.kind === "session" ? "ログイン状態が切れました" : "アクセスが拒否されました"}</b><br>${esc(a.message)}<br><span class="muted">${fmtDate(a.at)}</span></div><button class="btn gho sm x" onclick="clearAlert()">×</button></div>`;
   }
   if (!state.session.set) {
-    b.innerHTML += `<div class="banner info">はじめに「設定」タブで、ゲームクラブのログイン情報(PHPSESSID)を登録してください。</div>`;
+    b.innerHTML += `<div class="banner info">はじめに「設定」タブで、${SN()}のログイン情報(PHPSESSID)を登録してください。</div>`;
   }
   const t = state.lastTick;
   if (t && nowMs() - t > 20 * 60000 && !state.settings.paused) {
-    b.innerHTML += `<div class="banner warn">自動実行が${ago(t)}から動いていないようです。日本のサーバー(外部起動)とCloudflareの Workers → gc-scheduler → Logs を確認してください。</div>`;
+    b.innerHTML += `<div class="banner warn">自動実行が${ago(t)}から動いていないようです。日本のサーバー(外部起動)とCloudflareの Workers → gc-scheduler → Logs を確認してください(${SN()})。</div>`;
   }
   const x = state.ext;
   if (x && nowMs() - x.at > 5 * 60000 && !state.settings.paused) {
-    b.innerHTML += `<div class="banner warn"><div><b>日本からの外部起動が止まっています</b>(最後: ${fmtDate(x.at)})。日本のサーバーが動いているか確認してください。止まっている間はCloudflareの自動実行に戻りますが、ゲームクラブに止められる可能性が高いです。</div></div>`;
+    b.innerHTML += `<div class="banner warn"><div><b>日本からの外部起動が止まっています</b>(最後: ${fmtDate(x.at)})。日本のサーバーが動いているか確認してください。止まっている間はCloudflareの自動実行に戻りますが、${SN()}に止められる可能性が高いです。</div></div>`;
   } else if (x && x.country !== "JP") {
     b.innerHTML += `<div class="banner warn"><div><b>外部起動の国が日本ではありません</b>(国 ${esc(x.country)})。起動元のサーバーが日本のリージョンにあるか確認してください。</div></div>`;
   }
@@ -128,27 +142,78 @@ function renderBanners() {
 window.clearAlert = async () => { await api("/alert/clear", { method: "POST" }); refresh(); };
 
 // ---- ホーム ----
+// 「次の出品」までの残り時間を1秒ごとに更新
+function fmtLeft(ms) {
+  if (ms <= 0) return "まもなく(1分以内)";
+  const t = Math.floor(ms / 1000), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+  return h ? `あと ${h}時間${pad(m)}分${pad(sec)}秒` : `あと ${m}分${pad(sec)}秒`;
+}
+function tickNext() {
+  const el = document.getElementById("nextLeft"); if (!el || !state || !state.plan || !state.plan.items.length) return;
+  const left = state.plan.items[0].at - nowMs();
+  el.textContent = fmtLeft(left);
+  // 予定時刻を過ぎて1分半たったら、最新の状態を読み直す(出品されたかを反映)
+  if (left < -90000 && !tickNext.busy) { tickNext.busy = true; refresh(true).finally(() => { tickNext.busy = false; }); }
+}
+setInterval(tickNext, 1000);
+// 日付つきの時刻表示(今日なら時刻だけ、明日なら「明日」)
+function dayTime(ms) {
+  const d = J(ms), n = J(nowMs()), tm = J(nowMs() + 86400e3);
+  const t = `${d.h}:${pad(d.mi)}`;
+  if (d.y === n.y && d.mo === n.mo && d.d === n.d) return t;
+  if (d.y === tm.y && d.mo === tm.mo && d.d === tm.d) return `明日 ${t}`;
+  return `${d.mo}/${d.d} ${t}`;
+}
+
 function renderHome() {
-  const s = state.settings, now = state.now;
+  const s = state.settings;
   const curMin = J(nowMs()).h * 60 + J(nowMs()).mi;
+  const plan = state.plan || { items: [], today: {} };
+  const nextItem = plan.items[0];
   const slotHtml = state.slots.map((m) => {
     const st = state.today.slots[m];
+    const pl = plan.today[m];
     const cls = st?.status === "done" ? "done" : (st?.status === "failed" || st?.status === "skipped") ? "failed" : "";
-    const isNext = !st && m > curMin && state.slots.filter((x) => !state.today.slots[x] && x > curMin)[0] === m;
+    const isNext = !!(nextItem && pl && pl.at === nextItem.at && pl.kind === "plan");
     const mark = st?.status === "done" ? "✓ " : (st?.status === "failed" || st?.status === "skipped") ? "✕ " : "";
+    let sub = "";
+    if (st?.status === "done" && st.at) {
+      const a = J(st.at), am = a.h * 60 + a.mi;
+      sub = Math.abs(am - m) >= 2 ? `<small>→ ${a.h}:${pad(a.mi)}に出品</small>` : "";
+    } else if (!st || st.status === "retry") {
+      const late = m <= curMin;
+      if (pl && pl.kind === "plan") {
+        const a = J(pl.at), am = a.h * 60 + a.mi;
+        sub = late || Math.abs(am - m) >= 2 ? `<small>${late ? "遅れ・" : ""}→ ${dayTime(pl.at)}に出品予定</small>` : "";
+      } else if (pl && pl.kind === "limit") sub = `<small>今日の上限のため出品なし</small>`;
+      else if (late && !s.paused) sub = `<small>遅れ・今日中には出品されません</small>`;
+    }
     const tip = st?.message ? esc(st.message) : (st?.status === "done" ? "出品済み" : "");
-    return `<span class="slot ${cls} ${isNext ? "now" : ""}" title="${tip}">${mark}${hm2str(m)}</span>`;
+    return `<span class="slot ${cls} ${isNext ? "now" : ""}" title="${tip}">${mark}${hm2str(m)}${sub}</span>`;
   }).join("");
-  const legend = `<div class="legend"><span><i class="lg done"></i>出品済み</span><span><i class="lg failed"></i>出品されなかった</span><span><i class="lg now"></i>次の予定</span><span><i class="lg none"></i>これから</span></div>`;
+  const nextCard = (() => {
+    if (plan.blocked) return `<div class="card nextcard"><h2>次の出品</h2><div class="next-big off">出品しません</div><div class="next-why">${esc(plan.message || "")}</div></div>`;
+    if (!nextItem) return `<div class="card nextcard"><h2>次の出品</h2><div class="next-big off">3日以内の予定なし</div></div>`;
+    const rest = plan.items.slice(1).map((it) => `<li><b>${dayTime(it.at)}</b><span>${esc(it.late ? `${hm2str(it.slot)}枠の取り戻し` : `${hm2str(it.slot)}枠`)}${it.draft ? ` ・ ${esc(it.draft)}` : ""}</span></li>`).join("");
+    return `<div class="card nextcard">
+      <h2>次の出品</h2>
+      <div class="next-big">${dayTime(nextItem.at)}<span class="next-left" id="nextLeft">${fmtLeft(nextItem.at - nowMs())}</span></div>
+      <div class="next-why">${esc(nextItem.reason)}${nextItem.draft ? `<br>出す下書き: ${esc(nextItem.draft)}` : ""}</div>
+      <div class="muted next-note">自動実行は1分おきなので、実際の出品はこの時刻から1分以内になります。</div>
+      ${rest ? `<div class="next-sub">このあとの出品予定</div><ul class="next-list">${rest}</ul>` : ""}
+    </div>`;
+  })();
+  const legend = `<div class="legend"><span><i class="lg done"></i>出品済み</span><span><i class="lg failed"></i>出品されなかった</span><span><i class="lg now"></i>次に出品する枠</span><span><i class="lg none"></i>これから</span></div>`;
   const nextDraft = state.drafts.find((d) => d.key === state.nextDraftKey);
   const recent = (logs || []).slice(0, 6);
   $("#tab-home").innerHTML = `
+    ${nextCard}
     <div class="card">
-      <h2>稼働状態</h2>
+      <h2>稼働状態 <span class="q">${esc(SN())} ・ ${esc(SITE_INFO[site].rule)}</span></h2>
       <label class="switch" style="margin-bottom:14px">
         <input type="checkbox" id="pauseToggle" ${!s.paused ? "checked" : ""}>
         <span class="track"></span>
-        <span>${s.paused ? "停止中 — 自動出品はされません" : "稼働中 — 予定時刻に自動出品します"}</span>
+        <span>${s.paused ? `停止中 — ${esc(SN())}には自動出品しません` : `稼働中 — 予定時刻に${esc(SN())}へ自動出品します`}</span>
       </label>
       <dl class="dl">
         <dt>出品モード</dt><dd>自分の売れ行きで最適化</dd>
@@ -159,13 +224,13 @@ function renderHome() {
       </dl>
       <div class="fp">
         <button class="btn p" id="fpBtn" ${state.force && state.force.pending ? "disabled" : ""}>今すぐ自動出品</button>
-        <div class="muted fp-note">次の自動実行(1分以内)で、本番と同じ経路で1回出品します。予定の枠とは別の1回です(1日の上限には数えます)。</div>
+        <div class="muted fp-note">次の自動実行(1分以内)で、本番と同じ経路で${esc(SN())}に1回出品します。予定の枠とは別の1回です(1日の上限には数えます)。</div>
         <div id="fpMsg">${forceHtml()}</div>
       </div>
     </div>
     <div class="card">
       <h2>今日の予定 <span class="q">${state.slots.length}枠</span></h2>
-      <div class="slots">${slotHtml || "<span class='muted'>時間設定タブで予定を作成してください。</span>"}</div>
+      <div class="slots">${slotHtml || "<span class='muted'>時間タブで予定を作成してください。</span>"}</div>
       ${state.slots.length ? legend : ""}
     </div>
 
@@ -184,10 +249,9 @@ function renderHome() {
   };
   if (state.force && state.force.pending) watchForce(state.force.pending.at);
   $("#pauseToggle").onchange = async (e) => {
-    try { await api("/settings", { method: "POST", body: JSON.stringify({ paused: !e.target.checked }) }); window.Snd&&(e.target.checked?Snd.toggleOn():Snd.toggleOff()); toast(e.target.checked ? "稼働を開始しました" : "停止しました"); refresh(); }
+    try { await api("/settings", { method: "POST", body: JSON.stringify({ paused: !e.target.checked }) }); window.Snd&&(e.target.checked?Snd.toggleOn():Snd.toggleOff()); toast(e.target.checked ? `${SN()}の稼働を開始しました` : `${SN()}を停止しました`); refresh(); loadOverview(); }
     catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
   };
-
 }
 
 // 「今すぐ自動出品」の状態表示
@@ -234,8 +298,11 @@ function renderDrafts() {
         <span class="nm">${esc(d.label)}</span>
         ${d.enabled ? "" : '<span class="pill off">無効</span>'}
       </div>
-      <div class="meta">下書き #${d.draftId}${d.price ? ` ・ ${Number(d.price).toLocaleString()}円` : ""} ・ 出品${d.publishedCount}回${d.lastPublishedAt ? ` ・ 最終 ${fmtDate(d.lastPublishedAt)}` : ""}${d.key === state.nextDraftKey ? " ・ <b style='color:var(--green)'>次はこれ</b>" : ""}</div>
+      ${d.title && d.title !== d.label ? `<div class="dtitle">${esc(d.title)}</div>` : ""}
+      <div class="meta">下書き #${d.draftId}${d.price ? ` ・ ${Number(d.price).toLocaleString()}円` : ""} ・ 出品${d.publishedCount}回${d.lastPublishedAt ? ` ・ 最終 ${fmtDate(d.lastPublishedAt)}` : ""}${d.updatedAt ? ` ・ 編集 ${fmtDate(d.updatedAt)}` : ""}${d.key === state.nextDraftKey ? " ・ <b style='color:var(--green)'>次はこれ</b>" : ""}</div>
       <div class="acts">
+        <button class="btn sm p" data-act="edit">編集</button>
+        <button class="btn sm" data-act="copy">複製</button>
         <button class="btn sm" data-act="toggle">${d.enabled ? "無効化" : "有効化"}</button>
         <button class="btn sm" data-act="first">次に出す</button>
         <button class="btn sm gho" data-act="del">削除</button>
@@ -245,10 +312,10 @@ function renderDrafts() {
   $("#tab-drafts").innerHTML = `
     <div class="card">
       <h2>下書き一覧 <span class="q">上から順に出品されます</span></h2>
-      ${state.drafts.length ? `<div id="draftList">${list}</div>` : "<div class='center'>まだ下書きが登録されていません。<br>下に貼り付けて追加してください。</div>"}
+      ${state.drafts.length ? `<div class="muted dhint">文章や価格を変えるときは「編集」、似た商品を増やすときは「複製」を押してください。</div><div id="draftList">${list}</div>` : `<div class='center'>まだ${esc(SN())}の下書きが登録されていません。<br>下の「Payloadを貼り付けて追加」から1つ登録すると、あとは画面で編集・複製できます。</div>`}
     </div>
     <div class="card">
-      <h2>下書きを追加</h2>
+      <h2>Payloadを貼り付けて追加 <span class="q">新しい画像を使うとき</span></h2>
       ${addFormHtml()}
     </div>`;
   bindAddForm();
@@ -265,7 +332,7 @@ function addFormHtml() {
     <button class="btn p" id="d_add">追加する</button>
     <details class="help"><summary>データの取り方</summary><div>
       <ol>
-        <li>ゲームクラブで対象の下書きを一度出品する(開発者ツールのNetworkを記録しながら)</li>
+        <li>${SN()}で対象の下書きを一度出品する(開発者ツールのNetworkを記録しながら)</li>
         <li>名前が <code>add?draft=番号</code> の通信をクリック</li>
         <li>「Payload」タブ → 上の「View source」ボタンを押す</li>
         <li>表示された内容を全部コピーして、上の欄に貼り付け</li>
@@ -292,6 +359,7 @@ function bindDraftActs() {
       const d = state.drafts.find((x) => x.key === key);
       const act = btn.dataset.act;
       try {
+        if (act === "edit" || act === "copy") return openEditor(key, act);
         if (act === "toggle") await api("/drafts/" + key, { method: "PATCH", body: JSON.stringify({ enabled: !d.enabled }) });
         else if (act === "first") { await api(`/drafts/${key}/next`, { method: "POST", body: "{}" }); toast("次に出品します"); }
         else if (act === "del") { if (!confirm(`「${d.label}」を削除しますか?`)) return; await api("/drafts/" + key, { method: "DELETE" }); }
@@ -339,7 +407,7 @@ function renderSchedule() {
       <h2>出品モード</h2>
       <div class="mode on">
         <div class="mode-top"><span class="mode-name">自分の売れ行きで最適化</span><span class="pill ok">使用中</span></div>
-        <div class="muted" style="margin:6px 0 8px">このツールが出品した商品の売れ行きを記録し、売れやすい時間帯に寄せます。データが少ないうちは24時間に均等に出品します(約96分おき)。最適化後も一部の枠は未知の時間帯に回し続け、見落としを防ぎます。他の人の出品は確認しません。</div>
+        <div class="muted" style="margin:6px 0 8px">このツールが出品した商品の売れ行きを記録し、売れやすい時間帯に寄せます。データが少ないうちは24時間に均等に出品します(${site === "mac" ? "約4時間48分おき" : "約96分おき"})。最適化後も一部の枠は未知の時間帯に回し続け、見落としを防ぎます。他の人の出品は確認しません。</div>
         <div class="mode-ready ${r.level}">データ: ${lv[r.level]} ・ ${esc(r.note)}</div>
       </div>
     </div>
@@ -361,7 +429,8 @@ let anMetric = { own: "rate" };
 
 // 168マス(曜日×時間)の表。values[i] は数値 or null(データなし)。color[i] は 0〜1 の濃さ
 function grid(values, color, { fmt = (v) => v, hue = "pink", id = "g" } = {}) {
-  const rgb = hue === "green" ? "57,255,139" : hue === "cyan" ? "56,245,230" : "255,45,149";
+  const css = getComputedStyle(document.body), cv = (n) => css.getPropertyValue(n).trim();
+  const rgb = hue === "green" ? cv("--g3") : hue === "cyan" ? cv("--c3") : "255,45,149";
   let h = `<div class="grid"><table><thead><tr><th class="wdh"></th>`;
   for (let hr = 0; hr < 24; hr++) h += `<th>${hr}</th>`;
   h += `</tr></thead><tbody>`;
@@ -373,7 +442,7 @@ function grid(values, color, { fmt = (v) => v, hue = "pink", id = "g" } = {}) {
       const a = has ? 0.1 + 0.85 * Math.max(0, Math.min(1, color[i] || 0)) : 0;
       const txt = has ? fmt(v) : "";
       const dark = a > 0.55;
-      h += `<td data-g="${id}" data-i="${i}" style="background:${has ? `rgba(${rgb},${a.toFixed(2)})` : "transparent"};color:${dark ? "#05060a" : "var(--ink)"}">${txt}</td>`;
+      h += `<td data-g="${id}" data-i="${i}" style="background:${has ? `rgba(${rgb},${a.toFixed(2)})` : "transparent"};color:${dark ? "var(--bg)" : "var(--ink)"}">${txt}</td>`;
     }
     h += `</tr>`;
   }
@@ -389,7 +458,7 @@ function renderAnalysis() {
     <div id="an-body"></div>
     <div class="card">
       <h2>今すぐ確認</h2>
-      <div class="muted" style="margin-bottom:10px">通常は自動(自分の売れ行き10分おき)です。すぐ最新にしたいときに押してください。ゲームクラブに負担をかけないよう、数十秒かかります。</div>
+      <div class="muted" style="margin-bottom:10px">通常は自動(自分の売れ行き10分おき)です。すぐ最新にしたいときに押してください。${SN()}に負担をかけないよう、数十秒かかります。</div>
       <button class="btn" id="an_scan">今すぐ確認する</button>
       <div class="muted" id="an_scanMsg" style="margin-top:8px"></div>
     </div>`;
@@ -515,7 +584,7 @@ function connectWS() {
   if (!("WebSocket" in window)) return startPolling();
   clearTimeout(wsTimer);
   setLiveState(wsRetry ? "retry" : "connecting");
-  try { ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/stream?k=${encodeURIComponent(pw)}`); }
+  try { ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/stream?k=${encodeURIComponent(pw)}&s=${site}`); }
   catch { return startPolling(); }
   ws.onopen = () => {
     wsRetry = 0; setLiveState("live"); stopPolling();
@@ -561,7 +630,7 @@ function renderLogs() {
           <span class="muted">よく使う:</span>
           <button class="btn sm" data-p="pub">出品の結果</button>
           <button class="btn sm" data-p="err">エラーだけ</button>
-          <button class="btn sm" data-p="net">ゲームクラブへの通信</button>
+          <button class="btn sm" data-p="net">${SN()}への通信</button>
           <button class="btn sm gho" data-p="reset">元に戻す</button>
         </div>
         <div class="row" style="margin-top:10px;align-items:center;gap:8px">
@@ -601,7 +670,7 @@ function renderLogs() {
     const rows = filteredOps();
     const blob = new Blob([JSON.stringify(rows, null, 1)], { type: "application/json" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-    const d = J(nowMs()); a.download = `gc-log-${d.y}${pad(d.mo)}${pad(d.d)}-${pad(d.h)}${pad(d.mi)}.json`; a.click();
+    const d = J(nowMs()); a.download = `${site}-log-${d.y}${pad(d.mo)}${pad(d.d)}-${pad(d.h)}${pad(d.mi)}.json`; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 3000); toast(`${rows.length}件を保存しました`);
   };
   $("#ops_more").onclick = async (e) => {
@@ -641,7 +710,7 @@ function filteredOps() { return opsBuf.filter(passOps); }
 function drawNet() {
   const el = $("#ops_net"); if (!el || !opsNet) return;
   const pause = opsNet.pauseUntil ? `<span class="bad">休止中(${fmtTime(opsNet.pauseUntil)}まで)</span>` : `<span class="okc">通常稼働</span>`;
-  el.innerHTML = `ゲームクラブへの通信: 今日 <b class="tick">${opsNet.today}</b> / ${opsNet.cap} 回 ・ ${pause}`;
+  el.innerHTML = `${SN()}への通信: 今日 <b class="tick">${opsNet.today}</b> / ${opsNet.cap} 回 ・ ${pause}`;
 }
 function drawCount() { const c = $("#ops_count"); if (c) { const n = filteredOps().length; c.textContent = n ? `${n}件(読み込み済み ${opsBuf.length}件)` : ""; } }
 function drawHeld() { const b = $("#ops_held"); if (!b) return; b.classList.toggle("hide", !held.length); b.textContent = `新着 ${held.length}件 ― 押して表示`; }
@@ -653,7 +722,7 @@ function opBadges(o) {
     const ok = x.status >= 200 && x.status < 400 && !x.cfMitigated;
     h += `<span class="bd ${ok ? "ok" : "ng"}">${ok ? "✓" : "✕"}${x.status}${x.cfMitigated ? " 確認画面" : ""}</span>`;
   }
-  // 出どころは「ゲームクラブ側で記録された拠点」(cf-rayの末尾)を優先する
+  // 出どころは「サイト側で記録された拠点」(cf-rayの末尾)を優先する
   const c = (x.cfRay ? String(x.cfRay).split("-").pop() : "") || x.colo || "";
   if (c) { const jp = ["NRT", "KIX", "FUK", "OKA"].includes(c); h += `<span class="bd ${jp ? "jp" : "ab"}">${esc(COLO_NAME[c] || c)}</span>`; }
   if (x.ms != null && x.status != null) h += `<span class="bd">${x.ms >= 1000 ? (x.ms / 1000).toFixed(1) + "秒" : x.ms + "ms"}</span>`;
@@ -696,8 +765,9 @@ const OPS_KEY = { path: "アクセス先", method: "方式", status: "応答コ�
 function renderSettings() {
   const s = state.settings;
   $("#tab-settings").innerHTML = `
+    ${migrateCardHtml()}
     <div class="card">
-      <h2>ログイン情報(PHPSESSID)</h2>
+      <h2>${esc(SN())}のログイン情報(PHPSESSID)</h2>
       <div class="muted" style="margin-bottom:10px">現在: ${state.session.set ? `<span class="pill ok">登録済み</span> ${state.session.updatedAt ? "(" + fmtDate(state.session.updatedAt) + ")" : ""}` : '<span class="pill off">未登録</span>'}</div>
       <div class="field"><label>PHPSESSIDの値</label><input type="password" id="st_sess" placeholder="値の部分だけを貼り付け"></div>
       <div class="row">
@@ -708,8 +778,8 @@ function renderSettings() {
       <div class="muted" id="st_testMsg" style="margin-top:10px"></div>
       <details class="help"><summary>値の取り方</summary><div>
         <ol>
-          <li>ゲームクラブを開き、開発者ツール(F12)の「Application」タブへ</li>
-          <li>左の Cookies → https://gameclub.jp を選ぶ</li>
+          <li>${SN()}を開き、開発者ツール(F12)の「Application」タブへ</li>
+          <li>左の Cookies → ${SITE_INFO[site].origin} を選ぶ</li>
           <li><code>PHPSESSID</code> の行の Value をコピーして貼り付け</li>
         </ol>
         ブラウザでログアウトすると無効になります。普段どおり放置すれば長期間有効です。
@@ -717,7 +787,7 @@ function renderSettings() {
     </div>
     <div class="card">
       <h2>日本からの外部起動</h2>
-      <div class="muted" style="margin-bottom:10px">Cloudflareの自動実行は、ゲームクラブから「アメリカからの通信」と見られて止められます。そこで、<b>日本のサーバーが1分おきに下のURLを開く</b>ことでツールを動かします(その通信は「日本」と見られるので通れます)。URLには合言葉が入っているので、他人に見せないでください。</div>
+      <div class="muted" style="margin-bottom:10px">Cloudflareの自動実行は、${SN()}から「アメリカからの通信」と見られて止められます。そこで、<b>日本のサーバーが1分おきに下のURLを開く</b>ことでツールを動かします(その通信は「日本」と見られるので通れます)。URLには合言葉が入っているので、他人に見せないでください。</div>
       <div id="ex_box" class="muted">読み込み中…</div>
     </div>
     <div class="card">
@@ -731,7 +801,7 @@ function renderSettings() {
     </div>
     <div class="card">
       <h2>通信の出どころテスト</h2>
-      <div class="muted" style="margin-bottom:10px">ゲームクラブは日本以外からのアクセスを確認画面で止めるため、ツールは「保存領域」(場所が固定されている部分)から通信します。このボタンで、保存領域がどこの拠点にあるかと、そこからゲームクラブに通れるか(ログインなしのトップページを各1回だけ読みます)を確かめ、日本から通れるものを自動で選びます。<b>新しくした直後に一度押してください。</b></div>
+      <div class="muted" style="margin-bottom:10px">${SN()}は日本以外からのアクセスを確認画面で止めるため、ツールは「保存領域」(場所が固定されている部分)から通信します。このボタンで、保存領域がどこの拠点にあるかと、そこから${SN()}に通れるか(ログインなしのトップページを各1回だけ読みます)を確かめ、日本から通れるものを自動で選びます。<b>新しくした直後に一度押してください。</b></div>
       <button class="btn" id="st_origin">通信の出どころテスト</button>
       <div id="st_originMsg" style="margin-top:12px"></div>
     </div>
@@ -758,6 +828,7 @@ function renderSettings() {
     $("#ex_regen").onclick = async () => { if (!confirm("合言葉を作り直します。今のURL・コマンドは使えなくなります。よろしいですか?")) return; try { drawExt(await api("/ext/regen", { method: "POST", body: "{}" })); toast("作り直しました。サーバーのコマンドも貼り直してください"); } catch (e) { toast(e.message, true); } };
   };
   api("/ext").then(drawExt).catch((e) => { $("#ex_box").textContent = e.message; });
+  bindMigrate();
 
   // ---- 原因究明の実験 ----
   const dgCell = (x) => !x ? "—" : x.skipped ? '<span class="muted">未実施(ログイン情報なし)</span>' : x.error ? `<span class="bad">通信エラー</span>` : x.challenge ? `<span class="bad">✕ 確認画面(${x.status})</span>` : x.status === 200 ? `<span class="okc">✓ ${x.status}</span>` : `<span class="bad">${x.status}</span>`;
@@ -770,7 +841,7 @@ function renderSettings() {
       const okU = !u.top.challenge && !u.mypage.challenge && !u.top.error, okA = !a.top.challenge && !a.mypage.challenge && !a.top.error;
       const diffSeen = u.seen.loc !== a.seen.loc || u.seen.ipKind !== a.seen.ipKind;
       verdict = okU && !okA ? `<div class="banner warn" style="margin:10px 0 0"><div><b>確定: きっかけだけで結果が変わります。</b>同じ場所・同じ中身の通信でも、自動実行だけ止められました。${diffSeen ? `相手から見た姿も違います(画面の操作=国 ${esc(u.seen.loc)}・${esc(u.seen.ipKind)} / 自動実行=国 ${esc(a.seen.loc)}・${esc(a.seen.ipKind)})。<b>止められている理由は、この「見え方の違い」</b>だと考えられます。` : "相手から見た国・アドレスは同じなので、別の手がかりで判定されています。"}</div></div>`
-        : okU && okA ? '<div class="banner info" style="margin:10px 0 0"><div><b>どちらも通れました。</b>今はゲームクラブ側の判定が緩んでいる可能性があります。「今すぐ自動出品」も試してください。</div></div>'
+        : okU && okA ? `<div class="banner info" style="margin:10px 0 0"><div><b>どちらも通れました。</b>今は${SN()}側の判定が緩んでいる可能性があります。「今すぐ自動出品」も試してください。</div></div>`
         : !okU && !okA ? '<div class="banner warn" style="margin:10px 0 0"><div><b>どちらも止められました。</b>きっかけに関係なく止められています(判定がさらに厳しくなった可能性)。</div></div>'
         : '<div class="banner warn" style="margin:10px 0 0"><div><b>画面の操作だけ止められ、自動実行は通れました。</b>想定外の結果です。このまま教えてください。</div></div>';
     }
@@ -780,7 +851,7 @@ function renderSettings() {
       ${row("相手から見たアドレス", (r) => esc(r.seen.ipKind))}
       ${row("トップページ", (r) => dgCell(r.top))}
       ${row("マイページ", (r) => dgCell(r.mypage))}
-      ${row("ゲームクラブ側の拠点", (r) => esc(COLO_NAME[r.top.colo] || r.top.colo || "?"))}
+      ${row(`${SN()}側の拠点`, (r) => esc(COLO_NAME[r.top.colo] || r.top.colo || "?"))}
     </table></div>${verdict}`;
   };
   let dgTimer = null;
@@ -821,4 +892,255 @@ function renderSettings() {
   $("#st_test").onclick = async (e) => { e.target.disabled = true; $("#st_testMsg").textContent = "確認中…"; try { const r = await api("/test", { method: "POST", body: "{}" }); window.Snd&&(r.ok?Snd.success():Snd.fail()); $("#st_testMsg").innerHTML = `<span style="color:var(--${r.ok ? "ok" : "bad"})">${r.ok ? "✓ " : "✕ "}${esc(r.message)}</span>`; } catch (err) { $("#st_testMsg").textContent = err.message; } e.target.disabled = false; };
 }
 
-if (pw) { fetch("/api/state", { headers: { "x-admin-key": encodeURIComponent(pw) } }).then((r) => { if (r.ok) start(); else { sessionStorage.removeItem(KEY); } }); }
+
+// ===================================================================
+// ---- サイトの切り替え(画面上部) ----
+// ===================================================================
+async function loadOverview() {
+  try { overview = (await api("/overview")).sites; } catch { overview = overview || null; }
+  renderSites();
+}
+function siteStatus(o) {
+  if (!o) return { cls: "", text: "読み込み中…" };
+  if (o.error) return { cls: "is-bad", text: "読み込めません" };
+  if (o.alert) return { cls: "is-bad", text: o.alert === "session" ? "ログイン切れ" : "拒否された" };
+  if (o.pauseUntil && o.pauseUntil > nowMs()) return { cls: "is-bad", text: `休止中 ${fmtTime(o.pauseUntil)}まで` };
+  if (o.paused) return { cls: "is-off", text: `停止中 ・ 今日 ${o.today}/${o.limit}` };
+  if (!o.session) return { cls: "is-bad", text: "ログイン情報なし" };
+  return { cls: "is-run", text: `稼働中 ・ 今日 ${o.today}/${o.limit}` };
+}
+function renderSites() {
+  const box = $("#sites"); if (!box) return;
+  box.innerHTML = Object.entries(SITE_INFO).map(([id, info]) => {
+    const st = siteStatus(overview && overview[id]);
+    return `<button class="site-b ${id}${id === site ? " on" : ""}" data-site="${id}" aria-pressed="${id === site}">
+      <span class="site-n">${esc(info.name)}</span>
+      <span class="site-s ${st.cls}"><i></i>${esc(st.text)}</span>
+    </button>`;
+  }).join("");
+  $$("#sites [data-site]").forEach((b) => (b.onclick = () => switchSite(b.dataset.site)));
+}
+function switchSite(id) {
+  if (id === site || !SITE_INFO[id]) return;
+  if (editor && editor.dirty() && !confirm("編集中の下書きが保存されていません。破棄してサイトを切り替えますか?")) return;
+  closeEditor(true);
+  stopOps();
+  clearInterval(forceWatch); forceWatch = null;
+  document.body.classList.remove("site-" + site);
+  site = id;
+  try { localStorage.setItem(SITE_KEY, id); } catch {}
+  document.body.classList.add("site-" + site);
+  // サイトごとのデータは全部読み直す
+  state = null; logs = null; analysisData = null;
+  opsBuf = []; opsIds = new Set(); opsNewest = ""; opsNet = null; opsOpen = new Set(); opsTrace = ""; held = [];
+  $$(".tab").forEach((el) => (el.innerHTML = ""));
+  renderSites();
+  window.Snd && Snd.tabSwitch();
+  refresh().then(() => { if (tab === "logs") renderLogs(); });
+}
+
+// ===================================================================
+// ---- 下書きエディタ(画面で直接入力して編集・複製) ----
+// 一覧とは別の「シート」に表示するので、30秒ごとの自動更新で入力中の文字が消えることはありません。
+// ===================================================================
+const MAIN_FIELDS = [
+  { name: "name", label: "商品名", kind: "line", hint: "一覧に表示されるタイトルです。" },
+  { name: "detail", label: "説明文", kind: "long", hint: "改行もそのまま反映されます。" },
+  { name: "price", label: "価格", kind: "price", hint: "半角数字で。全角やカンマは保存時に直します。" },
+  { name: "notice_information", label: "注意事項", kind: "mid", hint: "" },
+];
+// その他の項目の、わかっている範囲での説明(わからない項目は名前だけ出す)
+const FIELD_NOTE = {
+  "item_images[0]": "画像(サイトの下書きに保存済みの画像の番号)",
+  subcategory_item_id: "カテゴリの番号",
+  account_type_id: "アカウントの種類の番号",
+  product_type_id: "商品の種類の番号",
+  _method: "送信方式(内部用)",
+  is_draft: "内部用", is_edit: "内部用", draft_id: "内部用",
+  limit_day: "出品期限の日付(出品のたびに約100年後へ自動で書き換えます)",
+  limit_time: "出品期限の時刻(出品のたびに自動で書き換えます)",
+};
+const AUTO_FIELDS = new Set(["limit_day", "limit_time"]);
+let editor = null;
+
+async function openEditor(key, mode) {
+  let d;
+  try { d = (await api("/drafts/" + key)).draft; } catch (e) { return toast(e.message, true); }
+  const copy = mode === "copy";
+  const fields = d.fields.map((f) => ({ ...f }));
+  const init = JSON.stringify({ label: copy ? "" : d.label, draftId: d.draftId, f: fields.map((f) => f.value) });
+  editor = { key, copy, base: d, fields, init, dirty: () => !!$("#sheet .ed") && JSON.stringify(readEditor()) !== init };
+  renderEditor();
+}
+
+function readEditor() {
+  const ed = editor;
+  const vals = ed.fields.map((f, i) => { const el = document.getElementById("ef_" + i); return el ? el.value : f.value; });
+  return { label: $("#ed_label").value, draftId: $("#ed_id").value.trim(), f: vals };
+}
+
+function fieldInput(f, i, meta) {
+  const v = esc(f.value);
+  const kind = meta ? meta.kind : AUTO_FIELDS.has(f.name) ? "auto" : f.value.length > 60 || f.value.includes("\n") ? "mid" : "line";
+  if (kind === "auto") return `<input type="text" id="ef_${i}" value="${v}" disabled>`;
+  if (kind === "price") return `<div class="ed-price"><input type="text" id="ef_${i}" value="${v}" inputmode="numeric" autocomplete="off"><span>円</span></div>`;
+  if (kind === "line") return `<input type="text" id="ef_${i}" value="${v}" autocomplete="off">`;
+  const rows = kind === "long" ? 12 : 4;
+  return `<textarea id="ef_${i}" rows="${rows}" class="${kind === "long" ? "ed-long" : ""}">${v}</textarea>`;
+}
+
+function renderEditor() {
+  const ed = editor, d = ed.base;
+  const used = new Set();
+  const main = MAIN_FIELDS.map((m) => {
+    const i = ed.fields.findIndex((f, k) => f.name === m.name && !f.file && !used.has(k));
+    if (i < 0) return "";
+    used.add(i);
+    return `<div class="ed-f" data-i="${i}">
+      <label for="ef_${i}">${esc(m.label)}${m.kind === "price" ? "" : `<span class="ed-count" id="ec_${i}"></span>`}</label>
+      ${fieldInput(ed.fields[i], i, m)}
+      ${m.hint ? `<div class="ed-hint">${esc(m.hint)}</div>` : ""}
+    </div>`;
+  }).join("");
+  const others = ed.fields.map((f, i) => ({ f, i })).filter((x) => !used.has(x.i));
+  const otherHtml = others.map(({ f, i }) => f.file
+    ? `<div class="ed-o file"><div class="ed-on"><code>${esc(f.name)}</code><span>ファイルの項目(変更できません。空のまま送ります)</span></div></div>`
+    : `<div class="ed-f ed-o" data-i="${i}"><label for="ef_${i}"><code>${esc(f.name)}</code>${FIELD_NOTE[f.name] ? `<span class="ed-note">${esc(FIELD_NOTE[f.name])}</span>` : ""}</label>${fieldInput(f, i)}</div>`).join("");
+  $("#sheet").innerHTML = `
+    <div class="ed-back"></div>
+    <div class="ed" role="dialog" aria-modal="true" aria-labelledby="ed_title">
+      <div class="ed-head">
+        <div>
+          <div class="ed-site">${esc(SN())}</div>
+          <h2 id="ed_title">${ed.copy ? `「${esc(d.label)}」を複製して新しい下書きを作る` : `下書きを編集`}</h2>
+        </div>
+        <button class="btn gho sm" id="ed_x" aria-label="閉じる">閉じる</button>
+      </div>
+      <div class="ed-body">
+        ${ed.copy ? `<div class="banner info" style="margin:0 0 14px"><div>元の下書きはそのまま残ります。ここで変えた内容は、<b>新しい下書き</b>として一覧の最後に追加されます。画像は元の下書きと同じものが使われます。</div></div>` : ""}
+        <div class="ed-row">
+          <div class="ed-f"><label for="ed_label">管理名<span class="ed-note">自分用のメモ。空欄なら商品名が入ります</span></label><input type="text" id="ed_label" value="${esc(ed.copy ? "" : d.label)}" placeholder="${esc(ed.copy ? d.label + "(コピー)" : "")}" maxlength="60" autocomplete="off"></div>
+          <div class="ed-f ed-id"><label for="ed_id">下書き番号<span class="ed-note">画像はこの番号の下書きのもの</span></label><input type="text" id="ed_id" value="${esc(d.draftId)}" inputmode="numeric" autocomplete="off"></div>
+        </div>
+        ${main}
+        <details class="ed-more">
+          <summary>その他の項目(${others.length}件) <span class="muted">ふだんは触らなくて大丈夫です</span></summary>
+          <div class="ed-more-b">${otherHtml}</div>
+        </details>
+      </div>
+      <div class="ed-foot">
+        <div class="ed-msg" id="ed_msg" aria-live="polite"></div>
+        <button class="btn gho" id="ed_cancel">キャンセル</button>
+        ${ed.copy ? "" : `<button class="btn" id="ed_tocopy" title="今の入力内容で新しい下書きを作ります(元の下書きは変わりません)">新しい下書きとして保存</button>`}
+        <button class="btn p" id="ed_save">${ed.copy ? "新しい下書きとして保存" : "保存する"}</button>
+      </div>
+    </div>`;
+  document.body.classList.add("ed-open");
+  const sheet = $("#sheet");
+  const update = () => {
+    ed.fields.forEach((f, i) => {
+      const el = document.getElementById("ef_" + i), c = document.getElementById("ec_" + i);
+      if (!el) return;
+      const changed = !ed.copy && el.value !== f.value;
+      el.closest(".ed-f")?.classList.toggle("chg", changed);
+      if (c) c.textContent = `${el.value.length}文字`;
+    });
+    const dirty = ed.dirty();
+    $("#ed_msg").textContent = dirty ? "保存していない変更があります" : "";
+  };
+  sheet.addEventListener("input", update);
+  update();
+  $("#ed_x").onclick = () => closeEditor();
+  $("#ed_cancel").onclick = () => closeEditor();
+  $(".ed-back").onclick = () => closeEditor();
+  $("#ed_save").onclick = () => saveEditor(ed.copy);
+  if ($("#ed_tocopy")) $("#ed_tocopy").onclick = () => saveEditor(true);
+  setTimeout(() => { const n = document.getElementById(ed.copy ? "ed_label" : "ed_id"); if (ed.copy && n) n.focus(); }, 50);
+}
+
+async function saveEditor(asNew) {
+  const ed = editor; if (!ed) return;
+  const v = readEditor();
+  if (!/^\d+$/.test(v.draftId)) return editorError("下書き番号は数字で入力してください。", "#ed_id");
+  const fields = ed.fields.map((f, i) => (f.file ? { name: f.name, file: true } : { name: f.name, value: v.f[i] }));
+  const ni = ed.fields.findIndex((f) => f.name === "name" && !f.file), pi = ed.fields.findIndex((f) => f.name === "price" && !f.file);
+  if (ni >= 0 && !v.f[ni].trim()) return editorError("商品名を入力してください。", "#ef_" + ni);
+  if (pi >= 0 && !/^[0-9０-９,，円\s]+$/.test(v.f[pi]) ) return editorError("価格は数字だけで入力してください(例: 3333)。", "#ef_" + pi);
+  const btns = $$("#sheet .ed-foot .btn"); btns.forEach((b) => (b.disabled = true));
+  try {
+    if (asNew) {
+      const label = v.label.trim() || (ed.copy ? `${ed.base.label}(コピー)` : "");
+      const r = await api("/drafts", { method: "POST", body: JSON.stringify({ draftId: v.draftId, copyOf: ed.key, label, fields }) });
+      toast(`新しい下書き「${r.draft.label}」を追加しました`);
+    } else {
+      const r = await api("/drafts/" + ed.key, { method: "PATCH", body: JSON.stringify({ label: v.label, draftId: v.draftId, fields, baseUpdatedAt: ed.base.updatedAt || null }) });
+      toast(r.changed.length ? `保存しました(${r.changed.length}か所)` : "変更はありませんでした");
+    }
+    closeEditor(true);
+    refresh();
+  } catch (e) {
+    btns.forEach((b) => (b.disabled = false));
+    editorError(e.message);
+  }
+}
+function editorError(msg, focusSel) {
+  const m = $("#ed_msg"); if (m) { m.textContent = msg; m.classList.add("bad"); setTimeout(() => m.classList.remove("bad"), 4000); }
+  if (focusSel) { const el = $(focusSel); if (el) { el.focus(); el.closest(".ed-f")?.classList.add("err"); setTimeout(() => el.closest(".ed-f")?.classList.remove("err"), 2500); } }
+  window.Snd && Snd.fail();
+}
+function closeEditor(force) {
+  if (!editor) return;
+  if (!force && editor.dirty() && !confirm("保存していない変更があります。破棄して閉じますか?")) return;
+  editor = null;
+  $("#sheet").innerHTML = "";
+  document.body.classList.remove("ed-open");
+}
+document.addEventListener("keydown", (e) => {
+  if (!editor) return;
+  if (e.key === "Escape") { e.preventDefault(); closeEditor(); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveEditor(editor.copy); }
+});
+window.addEventListener("beforeunload", (e) => { if (editor && editor.dirty()) { e.preventDefault(); e.returnValue = ""; } });
+
+// ---- 旧M&Aクラブ版からの引っ越し(設定タブ・M&Aクラブのときだけ) ----
+function migrateCardHtml() {
+  if (site !== "mac") return "";
+  return `<div class="card" id="mg_card">
+    <h2>旧M&Aクラブ版から引っ越す</h2>
+    <div class="muted" style="margin-bottom:10px">以前の「mac-scheduler」に入っている下書き・設定・ログイン情報・売れ行きの記録・ログを、このツールにコピーします。旧ツールの中身は変わりません。<b>二重出品を防ぐため、引っ越し直後は「停止中」になります。</b></div>
+    <div id="mg_box" class="muted">確認中…</div>
+  </div>`;
+}
+async function bindMigrate() {
+  const box = $("#mg_box"); if (!box) return;
+  let info;
+  try { info = await api("/migrate-mac"); } catch (e) { if (box.isConnected) box.innerHTML = `<span class="bad">${esc(e.message)}</span>`; return; }
+  // 読み込みの間に設定タブが描き直されていたら、新しい枠の方に任せる
+  if (!box.isConnected || site !== "mac") return;
+  const o = info.old || {};
+  if (!o.bound) { box.innerHTML = "旧ツールの保存領域につながっていません。引っ越しは不要か、すでに旧ツールを削除済みです。"; return; }
+  if (o.error) { box.innerHTML = `<span class="bad">旧ツールを読めませんでした: ${esc(o.error)}</span>`; return; }
+  const done = info.done;
+  box.innerHTML = `
+    <dl class="dl">
+      <dt>旧ツールの中身</dt><dd>${o.empty ? "データなし" : `下書き ${o.drafts}件${o.draftLabels && o.draftLabels.length ? `(${o.draftLabels.map(esc).join("、")})` : ""} ・ 売れ行きの記録 ${o.own}件 ・ ログイン情報 ${o.session ? "あり" : "なし"}`}</dd>
+      <dt>状態</dt><dd>${done ? `<span class="pill ok">引っ越し済み</span> ${fmtDate(done.at)}(下書き${done.drafts}件・出品記録${done.logs}件・動作ログ${done.ops}件)` : `<span class="pill off">まだ</span>${info.currentDrafts ? ` ・ こちらに下書きが${info.currentDrafts}件あります(上書きされます)` : ""}`}</dd>
+    </dl>
+    <div class="row" style="margin-top:10px"><button class="btn ${done ? "" : "p"}" id="mg_go" ${o.empty ? "disabled" : ""}>${done ? "もう一度引っ越す(上書き)" : "引っ越す"}</button></div>
+    <div id="mg_msg" style="margin-top:10px"></div>`;
+  const go = box.querySelector("#mg_go"); if (!go) return;
+  go.onclick = async (e) => {
+    if (!confirm(done || info.currentDrafts ? "今のM&Aクラブ側の下書き・設定・ログイン情報は、旧ツールの内容で上書きされます。よろしいですか?" : "旧M&Aクラブ版のデータをこのツールにコピーします。よろしいですか?")) return;
+    e.target.disabled = true; $("#mg_msg").innerHTML = '<span class="muted">引っ越し中…</span>';
+    try {
+      let r = await api("/migrate-mac", { method: "POST", body: JSON.stringify({ force: !!done }) });
+      if (r.needForce) r = await api("/migrate-mac", { method: "POST", body: JSON.stringify({ force: true }) });
+      $("#mg_msg").innerHTML = `<div class="banner info" style="margin:0"><div><b>引っ越しました。</b>下書き${r.drafts}件・出品記録${r.logs}件・動作ログ${r.ops}件。いまは<b>停止中</b>です。旧ツールを止めてから(またはもう動いていないことを確かめてから)、ホームのスイッチをオンにしてください。</div></div>`;
+      window.Snd && Snd.success();
+      toast(`引っ越しました(下書き${r.drafts}件)。いまは停止中です`);
+      refresh(); loadOverview();
+    } catch (err) { $("#mg_msg").innerHTML = `<span class="bad">${esc(err.message)}</span>`; e.target.disabled = false; }
+  };
+}
+
+if (pw) { fetch("/api/state", { headers: { "x-admin-key": encodeURIComponent(pw), "x-site": site } }).then((r) => { if (r.ok) start(); else { sessionStorage.removeItem(KEY); } }); }

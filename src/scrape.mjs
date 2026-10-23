@@ -1,4 +1,4 @@
-// ゲームクラブのページを読み取る部分。
+// サイト(ゲームクラブ/M&Aクラブ)のページを読み取る部分。両サイトは同じ作りなので、読み方も共通。
 // ・自分のマイページ(出品中/取引中/完了)
 // ・取引チャットの「取引情報」(販売日時)
 // 他の人の出品(公開一覧・商品ページ)は読みません。
@@ -6,7 +6,7 @@ import { gcFetch } from "./gc.mjs";
 
 export const TARGET_CATEGORY = "twitter";
 
-// "2026/10/11 16:58" → epoch(ms)。ゲームクラブの表示は日本時間。
+// "2026/10/11 16:58" → epoch(ms)。どちらのサイトも表示は日本時間。
 export function parseJst(str) {
   if (!str) return null;
   const m = String(str).trim().match(/(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/);
@@ -29,7 +29,8 @@ export function parseListHtml(htmlText) {
       category: idm[1],
       status,
       listedAt: parseJst((r.match(/fa-history"><\/i>\s*([0-9/: ]+?)\s*<\/span>/) || [])[1]),
-      views: Number((r.match(/fa-eye"><\/i>\s*(\d+)/) || [])[1] || 0),
+      // 閲覧数: ゲームクラブは目のアイコンの横の数字、M&Aクラブは「○人が検討中」
+      views: Number((r.match(/fa-eye"><\/i>\s*(\d+)/) || r.match(/(\d+)\s*人が検討中/) || [])[1] || 0),
       chatId: (r.match(/\/mypage\/chat\/(\d+)/) || [])[1] || null,
       price: Number(((r.match(/class="price">&yen;([\d,]+)/) || [])[1] || "").replace(/,/g, "")) || 0,
       unread: /class="btn[^"]*\bunread\b/.test(r),

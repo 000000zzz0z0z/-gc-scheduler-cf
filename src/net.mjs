@@ -1,9 +1,10 @@
-// ゲームクラブへのすべての通信はここを通す。
+// サイト(ゲームクラブ/M&Aクラブ)へのすべての通信はここを通す。休止・回数はサイトごとに別々に数える。
 // ・同じ処理の中では、通信と通信の間に3〜5秒(ランダム)の間隔を空ける
 // ・429(多すぎ)/503/Cloudflareの確認画面が返ったら、すぐに止めて60分休む(連打しない)
 // ・1日の通信回数に上限を設ける
 // ・すべての通信を、待機時間・送信内容・応答の詳細まで記録する(PHPSESSIDの値は記録しない)
 import { errInfo } from "./log.mjs";
+import { DEFAULT_SITE } from "./sites.mjs";
 
 const PAUSE_MS = 60 * 60e3;
 export const DAILY_CAP = 2500;
@@ -19,7 +20,7 @@ const kb = (n) => (n >= 1024 ? (n / 1024).toFixed(1) + "KB" : n + "B");
 
 export class PausedError extends Error {}
 
-// ゲームクラブへの通信は、保存領域(Durable Object)に中継してもらう。
+// サイトへの通信は、保存領域(Durable Object)に中継してもらう。
 // 保存領域は場所が固定されている(日本にある見込み)ため、日本以外を止める設定でも通れる。
 // テスト用の保存領域(relayFetchを持たない)のときは、そのまま通信する。
 export async function relay(store, url, init = {}) {
@@ -28,7 +29,7 @@ export async function relay(store, url, init = {}) {
   return new Response(r.body, { status: r.status, statusText: r.statusText, headers: r.headers });
 }
 
-export function createFetcher(store, log, { gap = true } = {}) {
+export function createFetcher(store, log, { gap = true, site = DEFAULT_SITE } = {}) {
   let last = 0, checked = false, pauseUntil = 0, counter = null, made = 0;
 
   async function init(now) {
@@ -47,12 +48,12 @@ export function createFetcher(store, log, { gap = true } = {}) {
     const now = Date.now();
     await init(now);
     const cat = meta.cat || "通信";
-    const path = String(url).replace("https://gameclub.jp", "");
+    const path = String(url).replace(site.origin, "");
     const method = init_.method || "GET";
     if (pauseUntil > now) {
       const mins = Math.ceil((pauseUntil - now) / 60e3);
       log.warn(cat, `休止中のため通信しませんでした(あと約${mins}分): ${meta.what || path}`, { path, pauseUntil });
-      throw new PausedError(`ゲームクラブから「アクセスが多い」と返されたため休止中です(あと約${mins}分)`);
+      throw new PausedError(`${site.name}から「アクセスが多い」と返されたため休止中です(あと約${mins}分)`);
     }
     if (counter.n >= DAILY_CAP) {
       log.warn(cat, `今日の通信上限(${DAILY_CAP}回)に達したため通信しませんでした: ${meta.what || path}`, { path });
@@ -63,7 +64,7 @@ export function createFetcher(store, log, { gap = true } = {}) {
     if (gap && last) {
       const target = GAP_MIN + Math.random() * (GAP_MAX - GAP_MIN);
       const wait = target - (Date.now() - last);
-      if (wait > 0) { waited = Math.round(wait); log.debug("通信", `ゲームクラブに負担をかけないよう ${(waited / 1000).toFixed(1)}秒 待機します(次: ${meta.what || path})`, { waitMs: waited }); await sleep(wait); }
+      if (wait > 0) { waited = Math.round(wait); log.debug("通信", `${site.name}に負担をかけないよう ${(waited / 1000).toFixed(1)}秒 待機します(次: ${meta.what || path})`, { waitMs: waited }); await sleep(wait); }
     }
     counter.n++; made++;
     const hdrs = init_.headers || {};
@@ -103,7 +104,7 @@ export function createFetcher(store, log, { gap = true } = {}) {
     if (res.status === 429 || res.status === 503 || d.cfMitigated) {
       pauseUntil = Date.now() + PAUSE_MS;
       await store.put("net:pauseUntil", pauseUntil);
-      log.error("通信", `ゲームクラブから「アクセスが多い/確認が必要」と返されたため、60分休止します(応答${res.status}): ${meta.what || path}`, d);
+      log.error("通信", `${site.name}から「アクセスが多い/確認が必要」と返されたため、60分休止します(応答${res.status}): ${meta.what || path}`, d);
     } else if (res.status >= 400) {
       log.warn(cat, `応答${res.status}(${ms}ms・${kb(text.length)}): ${meta.what || path}`, d);
     } else {
@@ -112,6 +113,7 @@ export function createFetcher(store, log, { gap = true } = {}) {
     const nullBody = [101, 204, 205, 304].includes(res.status);
     return new Response(nullBody ? null : text, { status: res.status, statusText: res.statusText, headers: res.headers });
   };
+  fetcher.site = site;
   fetcher.finish = async () => { if (counter) await store.put("net:count", counter); };
   fetcher.count = () => counter?.n || 0;
   fetcher.made = () => made;

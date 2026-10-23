@@ -1,21 +1,29 @@
 // データ保存(Durable Object)と、自動出品の判断ロジック。
 import { computeSlots, dayKey, minuteOfDay, publishDraft, jstParts, prepareFields } from "./gc.mjs";
+import { DEFAULT_SITE } from "./sites.mjs";
 
-export const DEFAULT_SETTINGS = {
-  paused: true,
-  dailyLimit: 15, // 固定(画面からは変更不可)
-  graceMin: 100000, // 事実上無制限(予定を過ぎても出品する)
-  minIntervalMin: 30, // ゲームクラブの「30分に1回」制限
-  schedule: { mode: "interval", start: "00:00", end: "24:00", count: 15, manual: [] },
-  // 出品モードは「自分の売れ行きで最適化」だけ(データが少ないうちは均等に出品)
-  optimizeMode: "own",
-};
-const DEFAULT_STATE = { pointer: 0, days: {}, alert: null };
+// サイトごとの既定の設定。上限と間隔はサイトのルール(sites.mjs)から決まる
+export function defaultSettings(site = DEFAULT_SITE) {
+  return {
+    paused: true,
+    dailyLimit: site.dailyLimit, // 固定(画面からは変更不可)
+    graceMin: 100000, // 事実上無制限(予定を過ぎても出品する)
+    minIntervalMin: site.minIntervalMin, // 「前回から○分あける」制限
+    schedule: { mode: "interval", start: "00:00", end: "24:00", count: site.dailyLimit, manual: [] },
+    // 出品モードは「自分の売れ行きで最適化」だけ(データが少ないうちは均等に出品)
+    optimizeMode: "own",
+  };
+}
+export const siteOfEnv = (env) => env.__site || DEFAULT_SITE;
+// 既定の状態は毎回新しく作る(共有のオブジェクトを返すと、書き換えが別のサイトに漏れるため)
+const defaultState = () => ({ pointer: 0, days: {}, alert: null });
 
 // 保存先(テスト時は env.__db で差し替え可能)
 export function db(env) {
+  const site = siteOfEnv(env);
+  if (env.__dbs) return env.__dbs[site.id];
   if (env.__db) return env.__db;
-  return env.GC_STORE.get(env.GC_STORE.idFromName("main"));
+  return env.GC_STORE.get(env.GC_STORE.idFromName(site.store));
 }
 
 function newLogId(at) {
@@ -30,8 +38,9 @@ export async function load(env, key) {
     const old = await env.GC_KV.get(key, { type: "json" });
     if (old != null) { await store.put(key, old); v = old; }
   }
-  if (key === "settings") return { ...DEFAULT_SETTINGS, ...(v || {}), optimizeMode: "own", schedule: { ...DEFAULT_SETTINGS.schedule, ...(v?.schedule || {}) } };
-  if (key === "state") return { ...DEFAULT_STATE, ...(v || {}) };
+  // 上限と間隔はサイトのルールなので、保存値に関係なく常に固定値を使う
+  if (key === "settings") { const D = defaultSettings(siteOfEnv(env)); return { ...D, ...(v || {}), dailyLimit: D.dailyLimit, minIntervalMin: D.minIntervalMin, optimizeMode: "own", schedule: { ...D.schedule, ...(v?.schedule || {}) } }; }
+  if (key === "state") return { ...defaultState(), ...(v || {}) };
   if (key === "drafts") return v || [];
   if (key === "secret") return v || {};
   return v;
@@ -61,11 +70,12 @@ export function nextDraftIndex(drafts, pointer) {
 }
 
 const STOP_KINDS = ["session", "blocked"];
-// ゲームクラブに出品が作られていないと確実に言える失敗(ロックを戻してよい)
+// サイトに出品が作られていないと確実に言える失敗(ロックを戻してよい)
 const SAFE_TO_RELEASE = ["session", "blocked", "invalid"];
 
 export async function publishNext(env, { now = Date.now(), draftKey = null, slot = null, manual = false, log = null } = {}) {
   const store = db(env);
+  const site = siteOfEnv(env);
   let ownLog = log;
   if (!ownLog) { const { createLogger } = await import("./log.mjs"); ownLog = createLogger(manual ? "manual" : "auto"); }
   const [settings, secret] = await Promise.all([load(env, "settings"), load(env, "secret")]);
@@ -105,13 +115,13 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
   });
 
   // ここが二重出品防止の要。前回の出品(または出品中)から minIntervalMin 分たっていなければ送信しない
-  const gap = (settings.minIntervalMin ?? 30) * 60e3;
+  const gap = (settings.minIntervalMin) * 60e3;
   const lock = await store.claim(now, gap);
-  ownLog.debug("出品", lock.ok ? `二重出品防止のロックを取得しました(前回の出品: ${lock.prev ? Math.floor((now - lock.prev) / 60e3) + "分前" : "記録なし"})` : `ロックを取得できませんでした(前回の出品から${settings.minIntervalMin ?? 30}分たっていない)`);
+  ownLog.debug("出品", lock.ok ? `二重出品防止のロックを取得しました(前回の出品: ${lock.prev ? Math.floor((now - lock.prev) / 60e3) + "分前" : "記録なし"})` : `ロックを取得できませんでした(前回の出品から${settings.minIntervalMin}分たっていない)`);
   if (!lock.ok) {
     const wait = Math.ceil(lock.waitMs / 60e3);
     // 予定枠からの呼び出しなら何も記録しない(すでに出品済みの枠を上書きしないため)
-    return { ok: false, kind: "interval", message: `前回の出品から${settings.minIntervalMin ?? 30}分たっていません(あと約${wait}分)。`, label: draft.label };
+    return { ok: false, kind: "interval", message: `前回の出品から${settings.minIntervalMin}分たっていません(あと約${wait}分)。`, label: draft.label };
   }
 
   const { createFetcher } = await import("./net.mjs");
@@ -120,13 +130,13 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
     const ld = (pf.find((f) => f.name === "limit_day") || {}).value, lt = (pf.find((f) => f.name === "limit_time") || {}).value;
     ownLog.debug("出品", `送信データを作成: ${pf.length}項目・出品期限を ${ld} ${lt}時 に設定(約100年後=実質無期限)・画像は下書きに保存済みのものを使用`, { 画像: (pf.find((f) => f.name.startsWith("item_images")) || {}).value });
   } catch {}
-  const pubFetcher = createFetcher(store, ownLog, { gap: false }); // 出品は単発なので間隔待ち不要
+  const pubFetcher = createFetcher(store, ownLog, { gap: false, site }); // 出品は単発なので間隔待ち不要
   const result = await publishDraft(draft, secret.phpsessid, { now, fetcher: pubFetcher });
   await pubFetcher.finish();
   if (result.ok) ownLog.info("出品", `出品に成功しました: 「${draft.label}」→ 出品番号 ${result.listingId}(通信の出どころ ${result.colo || "不明"})`, { listingId: result.listingId, url: result.url, status: result.status, colo: result.colo });
   else ownLog.error("出品", `出品に失敗しました: 「${draft.label}」${result.message}`, { kind: result.kind, status: result.status, colo: result.colo });
-  if (!result.ok && SAFE_TO_RELEASE.includes(result.kind)) { await store.release(lock.prev); ownLog.debug("出品", "ゲームクラブに出品は作られていないため、ロックを戻しました(すぐ再挑戦できます)"); }
-  else if (!result.ok) ownLog.debug("出品", "出品が作られた可能性を否定できないため、ロックは戻しません(30分後に再挑戦)");
+  if (!result.ok && SAFE_TO_RELEASE.includes(result.kind)) { await store.release(lock.prev); ownLog.debug("出品", `${site.name}に出品は作られていないため、ロックを戻しました(すぐ再挑戦できます)`); }
+  else if (!result.ok) ownLog.debug("出品", `出品が作られた可能性を否定できないため、ロックは戻しません(${settings.minIntervalMin}分後に再挑戦)`);
 
   // 送信中に他の操作で変わっている可能性があるので、最新を読み直してから反映する
   drafts = await load(env, "drafts");
@@ -167,7 +177,7 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
 }
 
 // 1分おきに呼ばれる。
-// 1回の処理で行う「重い仕事」(ゲームクラブへの複数回の通信)は1つだけにする。
+// 1回の処理で行う「重い仕事」(サイトへの複数回の通信)は1つだけにする。
 // 優先順: 予定枠の出品 → 自分の売れ行き確認(10分おき)
 // 他の人の出品(公開一覧・商品ページ)は確認しない。
 // 各作業が終わるたびにログと通信回数を保存するので、万一途中で止まっても経過が残る。
@@ -177,6 +187,7 @@ const agoMin = (now, t) => (t ? Math.floor((now - t) / 60e3) + "分前" : "未�
 export async function tick(env, now = Date.now()) {
   const T0 = Date.now();
   const store = db(env);
+  const site = siteOfEnv(env);
   await store.put("lastTick", now);
   const { createLogger, errInfo } = await import("./log.mjs");
   const { createFetcher } = await import("./net.mjs");
@@ -204,7 +215,7 @@ export async function tick(env, now = Date.now()) {
       await store.put("diagReserve", null);
       const { runDiag, diagLine } = await import("./diag.mjs");
       const secret = await load(env, "secret");
-      const r = await runDiag(store, secret.phpsessid ? String(secret.phpsessid).trim() : "", "auto");
+      const r = await runDiag(store, secret.phpsessid ? String(secret.phpsessid).trim() : "", "auto", site.origin);
       await store.put("diag:auto", r);
       log.info("システム", `原因究明の実験(自動実行): ${diagLine(r)}`, { cfRay: r.mypage.ray || r.top.ray, status: r.mypage.status ?? r.top.status });
       await log.flush(store);
@@ -214,7 +225,7 @@ export async function tick(env, now = Date.now()) {
   if (settings.paused) {
     if (now - ((await store.get("lastPausedLog")) || 0) > 3600e3) {
       await store.put("lastPausedLog", now);
-      log.info("定期実行", `${nowLabel} 停止中です(出品・売れ行き確認はすべて止まっています)。このメッセージは1時間に1回だけ出ます`);
+      log.info("定期実行", `${nowLabel} ${site.name}は停止中です(出品・売れ行き確認はすべて止まっています)。このメッセージは1時間に1回だけ出ます`);
       await log.flush(store);
     }
     return { skipped: "paused" };
@@ -223,7 +234,7 @@ export async function tick(env, now = Date.now()) {
   const out = {};
   const step = async (name, label, fn) => {
     const t0 = Date.now();
-    const fetcher = createFetcher(store, log);
+    const fetcher = createFetcher(store, log, { site });
     log.debug("定期実行", `「${label}」を開始します`);
     try { out[name] = await fn(fetcher); }
     catch (e) { if (e?.constructor?.name !== "PausedError") log.error("システム", `「${label}」の処理中にエラーが起きました`, errInfo(e)); else log.warn("定期実行", `「${label}」は休止中・上限のため中断しました: ${e.message}`); out[name] = { error: e.message }; }
@@ -243,7 +254,7 @@ export async function tick(env, now = Date.now()) {
     const dk = dayKey(now);
     const mod = minuteOfDay(now);
     const day = state.days[dk] || { count: 0, slots: {} };
-    const gapMs = (settings.minIntervalMin ?? 30) * 60e3;
+    const gapMs = (settings.minIntervalMin) * 60e3;
     const lockLeft = Math.max(0, gapMs - (now - (ts["lock:last"] || 0)));
     const nextSlot = slots.find((sl) => sl > mod);
     const pending = slots.filter((sl) => sl <= mod && (!day.slots[sl] || day.slots[sl].status === "retry"));
@@ -252,7 +263,7 @@ export async function tick(env, now = Date.now()) {
     log.debug("定期実行", `${nowLabel} の定期実行を開始(処理番号 ${log.trace})`, {
       今日の出品: `${day.count}/${settings.dailyLimit}`,
       次の予定枠: nextSlot != null ? fmtHM(nextSlot) : "今日はもうなし", 未処理の過去の枠: pending.map(fmtHM).join(" ") || "なし",
-      "30分ルール": lockLeft ? `あと${Math.ceil(lockLeft / 60e3)}分は出品できない` : "出品できる",
+      [`${settings.minIntervalMin}分ルール`]: lockLeft ? `あと${Math.ceil(lockLeft / 60e3)}分は出品できない` : "出品できる",
       売れ行き確認: agoMin(now, ts.lastOwnScan), ログイン情報: secret.phpsessid ? "登録済み" : "未登録",
     });
 
@@ -288,7 +299,7 @@ export async function tick(env, now = Date.now()) {
     let decision = "";
     if (due != null && lockLeft > 0) {
       out.deferred = due;
-      decision = `予定枠 ${fmtHM(due)} の出品は、30分ルールのため後回し(あと${Math.ceil(lockLeft / 60e3)}分)。この分は他の仕事をします`;
+      decision = `予定枠 ${fmtHM(due)} の出品は、${settings.minIntervalMin}分ルールのため後回し(あと${Math.ceil(lockLeft / 60e3)}分)。この分は他の仕事をします`;
       due = null;
     }
 
@@ -351,4 +362,54 @@ export async function rebuildSchedule(env, settings, log, now = Date.now()) {
   const added = times.filter((t) => !before.includes(t)), removed = before.filter((t) => !times.includes(t));
   log.info("最適化", `スケジュールを保存しました(${times.length}枠): ${times.join(" ")}`, { 変更前: before.join(" "), 追加された時刻: added.join(" ") || "なし", 外された時刻: removed.join(" ") || "なし", 理由: reason });
   return { times, reason };
+}
+
+// ===== 次の出品予定の計算(画面表示用) =====
+// tick() と同じルール(予定枠の順番・最低間隔・1日の上限・0時の日付切り替え)で、
+// 1分おきの自動実行を先までなぞり、「実際に出品される時刻」を予想する。
+// 自動実行は毎分0秒すぎに動くので、ここでは「毎分5秒」に動くとみなして計算する。
+export function planUpcoming({ settings, state, drafts, lockLast = 0, hasSession = true, now = Date.now(), max = 6, horizonMin = 3 * 1440 }) {
+  const enabled = (drafts || []).filter((d) => d.enabled);
+  if (settings.paused) return { blocked: "paused", message: "停止中のため、自動出品はしません。ホームのスイッチをオンにすると予定どおり出品します。", items: [], today: {} };
+  if (!hasSession) return { blocked: "nosession", message: "ログイン情報(PHPSESSID)が未登録のため、出品できません。設定タブで登録してください。", items: [], today: {} };
+  if (!enabled.length) return { blocked: "empty", message: "有効な下書きがないため、出品できません。下書きタブで登録・有効化してください。", items: [], today: {} };
+
+  const slots = computeSlots(settings.schedule, settings.dailyLimit);
+  if (!slots.length) return { blocked: "noslots", message: "予定の枠がありません。時間タブで予定を作成してください。", items: [], today: {} };
+  const gap = (settings.minIntervalMin) * 60e3;
+  const limit = settings.dailyLimit;
+  const days = {}; // シミュレーション用の日ごとの状態(実データは変更しない)
+  const dayOf = (dk) => (days[dk] ||= (() => { const d = state.days?.[dk] || { count: 0, slots: {} }; return { count: d.count || 0, slots: Object.fromEntries(Object.entries(d.slots || {}).map(([k, v]) => [k, v.status])) }; })());
+  let lock = lockLast || 0, pointer = state.pointer || 0;
+  const items = [], today = {};
+  const todayKey = dayKey(now);
+  const startMin = Math.floor(now / 60e3) + 1; // 次の自動実行(次の分)から
+  for (let i = 0; i < horizonMin && items.length < max; i++) {
+    const t = (startMin + i) * 60e3 + 5e3;
+    const dk = dayKey(t), mod = minuteOfDay(t), day = dayOf(dk);
+    let due = null;
+    for (const sl of slots) {
+      if (sl > mod) break;
+      const st = day.slots[sl];
+      if (st && st !== "retry") continue;
+      if (mod - sl > settings.graceMin) { day.slots[sl] = "skipped"; continue; }
+      due = sl; break;
+    }
+    if (due == null || t - lock < gap) continue;
+    if (day.count >= limit) { day.slots[due] = "failed"; if (dk === todayKey) today[due] = { at: t, kind: "limit" }; continue; }
+    // 出品する下書き(順番どおり)
+    let idx = -1;
+    for (let k = 0; k < drafts.length; k++) { const j = (pointer + k) % drafts.length; if (drafts[j].enabled) { idx = j; break; } }
+    const d = drafts[idx];
+    pointer = (idx + 1) % drafts.length;
+    const slotAt = Date.parse(dk + "T00:00:00+09:00") + due * 60e3;
+    const reasons = [];
+    if (t - slotAt >= 2 * 60e3) reasons.push(`予定 ${fmtHM(due)} の枠のぶん(遅れを取り戻し中)`);
+    else reasons.push(`予定 ${fmtHM(due)} の枠`);
+    if (lock && lock + gap > slotAt + 60e3) reasons.push(`前回の出品(${fmtHM(minuteOfDay(lock))})から${settings.minIntervalMin}分あける必要があるため、この時刻になります`);
+    items.push({ at: t - 5e3, slot: due, day: dk, late: t - slotAt >= 2 * 60e3, draft: d ? d.label : null, reason: reasons.join("。") });
+    if (dk === todayKey) today[due] = { at: t - 5e3, kind: "plan" };
+    day.slots[due] = "done"; day.count++; lock = t;
+  }
+  return { blocked: null, items, today, gapMin: settings.minIntervalMin, limit };
 }

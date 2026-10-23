@@ -2,9 +2,15 @@
 // - fetch: 管理画面の表示と API
 // - scheduled: 1分おきの自動出品(wrangler.toml の triggers.crons)
 import { PAGE } from "./page.mjs";
-import { load, save, loadLogs, db, publishNext, nextDraftIndex, tick } from "./core.mjs";
+import { load, save, loadLogs, db, publishNext, nextDraftIndex, tick, planUpcoming, siteOfEnv } from "./core.mjs";
 export { GcStore } from "./store.mjs";
-import { computeSlots, dayKey, parseMultipart, testConnection, isHM } from "./gc.mjs";
+import { computeSlots, dayKey, parseMultipart, normalizeFields, testConnection, isHM } from "./gc.mjs";
+import { SITES, SITE_IDS, siteOf, siteEnv } from "./sites.mjs";
+
+// どのサイトの操作か。画面は x-site ヘッダー、外部起動やリアルタイム表示は ?s= で伝える(なければゲームクラブ)
+function requestSite(request, url) {
+  return siteOf(request.headers.get("x-site")) || siteOf(url.searchParams.get("s")) || SITES.gc;
+}
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
 
@@ -29,7 +35,7 @@ function authorized(request, env) {
 
 const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : d; };
 
-function mergeSettings(cur, body) {
+function mergeSettings(cur, body, limit) {
   const s = JSON.parse(JSON.stringify(cur));
   if ("paused" in body) s.paused = !!body.paused;
   if (body.schedule) {
@@ -39,14 +45,14 @@ function mergeSettings(cur, body) {
     if (sc.end && !isHM(sc.end)) throw new Error("終了時刻は 24:00 のような形式で入力してください。");
     if (sc.manual) { const bad = sc.manual.filter((t) => !isHM(t) || t === "24:00"); if (bad.length) throw new Error(`時刻の形式が正しくありません: ${bad.join(", ")}`); }
     s.schedule = { ...s.schedule, ...sc };
-    if ("count" in sc) s.schedule.count = clamp(sc.count, 1, 15, cur.schedule.count);
+    if ("count" in sc) s.schedule.count = clamp(sc.count, 1, limit, cur.schedule.count);
   }
   return s;
 }
 
 const draftSummary = (d) => {
   const get = (n) => d.fields.find((f) => f.name === n)?.value;
-  return { key: d.key, label: d.label, draftId: d.draftId, repeat: d.repeat, enabled: d.enabled, publishedCount: d.publishedCount || 0, lastPublishedAt: d.lastPublishedAt || null, price: get("price") || null, title: (get("name") || "").slice(0, 80) };
+  return { key: d.key, label: d.label, draftId: d.draftId, repeat: d.repeat, enabled: d.enabled, publishedCount: d.publishedCount || 0, lastPublishedAt: d.lastPublishedAt || null, price: get("price") || null, title: (get("name") || "").slice(0, 80), updatedAt: d.updatedAt || null, fieldCount: d.fields.length };
 };
 
 function who(request) {
@@ -57,7 +63,7 @@ function who(request) {
   return { IP: request.headers.get("cf-connecting-ip") || "不明", 国: cf.country || "不明", 地域: cf.city || cf.region || undefined, 端末: dev, ブラウザ: br };
 }
 // 画面が数秒おきに自動で取りに来る通信は、記録すると大量になるので個別には残さない
-const POLLING = new Set(["GET /api/ops", "GET /api/state", "GET /api/analysis", "GET /api/logs", "POST /api/hello"]);
+const POLLING = new Set(["GET /api/ops", "GET /api/state", "GET /api/analysis", "GET /api/logs", "POST /api/hello", "GET /api/overview"]);
 async function accessLog(env, request, lvl, msg, extra) {
   try { const { createLogger } = await import("./log.mjs"); const l = createLogger("access"); l[lvl]("アクセス", msg, { ...who(request), ...(extra || {}) }); await l.flush(db(env)); } catch {}
 }
@@ -66,7 +72,7 @@ async function adminLog(env, msg, d) {
   try { const { createLogger } = await import("./log.mjs"); const l = createLogger("manual"); l.info("管理画面", msg, d); await l.flush(db(env)); } catch {}
 }
 
-async function handleApi(request, env, path) {
+async function handleApi(request, env, path, baseEnv = env) {
   if (!env.ADMIN_PASSWORD) return json({ error: "ADMIN_PASSWORD が未設定です。CloudflareのSettings → Variables and Secrets で設定してください。" }, 500);
   if (!authorized(request, env)) {
     const given = request.headers.get("x-admin-key");
@@ -75,6 +81,7 @@ async function handleApi(request, env, path) {
   }
   if (!env.GC_STORE) return json({ error: "保存領域(Durable Object)が未接続です。wrangler.toml を最新版にしてください。" }, 500);
 
+  const site = siteOfEnv(env);
   const method = request.method;
   const body = ["POST", "PATCH", "PUT"].includes(method) ? await request.json().catch(() => ({})) : {};
   const seg = path.split("/").filter(Boolean); // ["api", ...]
@@ -83,16 +90,19 @@ async function handleApi(request, env, path) {
   try {
     if (method === "GET" && sub[0] === "state" && sub.length === 1) {
       const { netStatus } = await import("./net.mjs");
-      const [settings, secret, drafts, state, lastTick, net, force] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "drafts"), load(env, "state"), db(env).get("lastTick"), netStatus(db(env)), db(env).getMany(["forcePublish", "forceResult", "ext:info"])]);
+      const [settings, secret, drafts, state, lastTick, net, force] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "drafts"), load(env, "state"), db(env).get("lastTick"), netStatus(db(env)), db(env).getMany(["forcePublish", "forceResult", "ext:info", "lock:last", "migrated:from"])]);
       const now = Date.now();
       const idx = nextDraftIndex(drafts, state.pointer);
-      return json({ now, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick, net, force: { pending: force.forcePublish || null, result: force.forceResult || null }, ext: force["ext:info"] || null });
+      // 次の出品予定(実際の自動実行と同じルールで計算)
+      let plan;
+      try { plan = planUpcoming({ settings, state, drafts, lockLast: force["lock:last"] || 0, hasSession: !!secret.phpsessid, now }); } catch (e) { plan = { blocked: "error", message: "予定の計算に失敗しました: " + e.message, items: [], today: {} }; }
+      return json({ now, site: { id: site.id, name: site.name }, plan, lockLast: force["lock:last"] || 0, migratedFrom: force["migrated:from"] || null, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick, net, force: { pending: force.forcePublish || null, result: force.forceResult || null }, ext: force["ext:info"] || null });
     }
     if (method === "GET" && sub[0] === "logs" && sub.length === 1) return json({ logs: await loadLogs(env, 3000) });
 
     if (method === "POST" && sub[0] === "settings") {
-      const s = mergeSettings(await load(env, "settings"), body); await save(env, "settings", s);
-      if ("paused" in body) await adminLog(env, body.paused ? "稼働を停止しました" : "稼働を開始しました");
+      const s = mergeSettings(await load(env, "settings"), body, site.dailyLimit); await save(env, "settings", s);
+      if ("paused" in body) await adminLog(env, body.paused ? `${site.name}の稼働を停止しました` : `${site.name}の稼働を開始しました`);
       else await adminLog(env, "設定を変更しました", { keys: Object.keys(body) });
       return json({ ok: true, settings: s });
     }
@@ -114,7 +124,9 @@ async function handleApi(request, env, path) {
       // 自動実行と同じく、保存領域から通信する(=本番と同じ経路を確かめる)
       const { relay } = await import("./net.mjs");
       const st = db(env);
-      const r = await testConnection(secret.phpsessid, { fetcher: (u, i) => relay(st, u, i) });
+      const viaRelay = (u, i) => relay(st, u, i);
+      viaRelay.site = site; // 送り先のサイト
+      const r = await testConnection(secret.phpsessid, { fetcher: viaRelay });
       await adminLog(env, `接続テスト: ${r.ok ? "成功" : "失敗"} - ${r.message}`, { status: r.status, colo: r.colo });
       return json(r);
     }
@@ -130,7 +142,8 @@ async function handleApi(request, env, path) {
       if (method === "POST" && sub[1] === "regen") { key = mk(); await st.put("ext:key", key); await adminLog(env, "外部起動の合言葉を作り直しました(古いURLは使えなくなりました)"); }
       if (!key) { key = mk(); await st.put("ext:key", key); }
       const g = await st.getMany(["ext:info"]);
-      return json({ url: `${new URL(request.url).origin}/ext-tick?k=${key}`, info: g["ext:info"] || null });
+      // ゲームクラブは統合前と同じURL(Lambdaの URL はそのまま使える)。他のサイトは &s=サイト を付ける
+      return json({ url: `${new URL(request.url).origin}/ext-tick?k=${key}${site.id === "gc" ? "" : "&s=" + site.id}`, info: g["ext:info"] || null });
     }
     // ===== 原因究明の実験 =====
     if (sub[0] === "diag") {
@@ -138,7 +151,7 @@ async function handleApi(request, env, path) {
       if (method === "POST" && sub[1] === "ui") {
         const { runDiag, diagLine } = await import("./diag.mjs");
         const secret = await load(env, "secret");
-        const r = await runDiag(st, secret.phpsessid ? String(secret.phpsessid).trim() : "", "ui");
+        const r = await runDiag(st, secret.phpsessid ? String(secret.phpsessid).trim() : "", "ui", site.origin);
         await st.put("diag:ui", r);
         await adminLog(env, `原因究明の実験(画面の操作): ${diagLine(r)}`, { cfRay: r.mypage.ray || r.top.ray, status: r.mypage.status ?? r.top.status });
         return json({ ok: true, result: r });
@@ -154,7 +167,8 @@ async function handleApi(request, env, path) {
       }
     }
     if (method === "POST" && sub[0] === "origin") {
-      const { GC, UA } = await import("./gc.mjs");
+      const { UA } = await import("./gc.mjs");
+      const GC = site.origin;
       const main = db(env);
       const ns = env.GC_STORE;
       const cands = [["main", main]];
@@ -179,7 +193,7 @@ async function handleApi(request, env, path) {
         // ※trace の loc(国)は、画面から押したときはあなたの国(JP)が引き継がれることがあり、当てにならない
         const inJp = JP.includes(gc.colo);
         results.push({ name, where, gc, ok, inJp });
-        await adminLog(env, `通信の出どころテスト[${name === "main" ? "データ本体" : "中継専用"}]: 拠点=${where.colo || "不明"}(${where.loc || "?"}) / ゲームクラブ=${gc.error ? "通信エラー" : `応答${gc.status}${gc.challenge ? "・確認画面" : ""}`}(出どころ ${gc.colo || "?"})`, { colo: where.colo, loc: where.loc, status: gc.status, cfRay: gc.ray });
+        await adminLog(env, `通信の出どころテスト[${name === "main" ? "データ本体" : "中継専用"}]: 拠点=${where.colo || "不明"}(${where.loc || "?"}) / ${site.name}=${gc.error ? "通信エラー" : `応答${gc.status}${gc.challenge ? "・確認画面" : ""}`}(出どころ ${gc.colo || "?"})`, { colo: where.colo, loc: where.loc, status: gc.status, cfRay: gc.ray });
       }
       const prev = (await main.get("net:relay")) || "main";
       // 中継専用(アジア指定)を優先し、だめならデータ本体
@@ -188,7 +202,7 @@ async function handleApi(request, env, path) {
       if (best && chosen !== prev) await main.put("net:relay", chosen);
       // 日本から通れると確かめられたので、海外から止められて入っていた休止は解除する
       if (best && ((await main.get("net:pauseUntil")) || 0) > Date.now()) { await main.put("net:pauseUntil", 0); await adminLog(env, "日本から通れることを確認したため、通信の休止を解除しました"); }
-      await adminLog(env, best ? `以後のゲームクラブへの通信は「${chosen === "main" ? "データ本体の保存領域" : "中継専用の保存領域"}」(${best.gc.colo})から出します` : `日本から通れる保存領域が見つからなかったため、通信の出どころは変更しません(現在: ${prev})`);
+      await adminLog(env, best ? `以後の${site.name}への通信は「${chosen === "main" ? "データ本体の保存領域" : "中継専用の保存領域"}」(${best.gc.colo})から出します` : `日本から通れる保存領域が見つからなかったため、通信の出どころは変更しません(現在: ${prev})`);
       return json({ ok: !!best, chosen, changed: !!best && chosen !== prev, results });
     }
     // ===== 今すぐ自動出品(予約) =====
@@ -204,12 +218,12 @@ async function handleApi(request, env, path) {
       if (nextDraftIndex(drafts, state.pointer) < 0) return no("出品できる下書きがありません。");
       const day = state.days[dayKey(now)] || { count: 0 };
       if (day.count >= settings.dailyLimit) return no(`今日の上限(${settings.dailyLimit}回)に達しています。`);
-      const gap = (settings.minIntervalMin ?? 30) * 60e3, left = gap - (now - (g["lock:last"] || 0));
-      if (left > 0) return no(`前回の出品から${settings.minIntervalMin ?? 30}分たっていません(あと約${Math.ceil(left / 60e3)}分)。`);
-      if ((g["net:pauseUntil"] || 0) > now) return no(`ゲームクラブへの通信を休止中です(あと約${Math.ceil((g["net:pauseUntil"] - now) / 60e3)}分)。設定タブの「通信の出どころテスト」で日本から通れると確認できれば、休止は解除されます。`);
+      const gap = settings.minIntervalMin * 60e3, left = gap - (now - (g["lock:last"] || 0));
+      if (left > 0) return no(`前回の出品から${settings.minIntervalMin}分たっていません(あと約${Math.ceil(left / 60e3)}分)。`);
+      if ((g["net:pauseUntil"] || 0) > now) return no(`${site.name}への通信を休止中です(あと約${Math.ceil((g["net:pauseUntil"] - now) / 60e3)}分)。設定タブの「通信の出どころテスト」で日本から通れると確認できれば、休止は解除されます。`);
       if (g.forcePublish) return no("すでに予約済みです。1分以内に出品されます。");
       await st.put("forcePublish", { at: now });
-      await adminLog(env, "「今すぐ自動出品」を予約しました(次の自動実行で出品します)");
+      await adminLog(env, `${site.name}の「今すぐ自動出品」を予約しました(次の自動実行で出品します)`);
       return json({ ok: true, at: now });
     }
     if (method === "POST" && sub[0] === "publish") return json(await publishNext(env, { draftKey: body.key || null, manual: true }));
@@ -217,15 +231,23 @@ async function handleApi(request, env, path) {
 
     if (sub[0] === "drafts") {
       const drafts = await load(env, "drafts");
+      const cleanLabel = (v) => String(v || "").trim().slice(0, 60);
+      // 追加: ①Payloadの貼り付け(raw) ②画面で入力した項目(fields。複製して編集したものなど)
       if (method === "POST" && sub.length === 1) {
         const draftId = String(body.draftId || "").trim();
         if (!/^\d+$/.test(draftId)) throw new Error("下書き番号は数字で入力してください(URLの draft= の後ろの数字です)。");
-        const fields = parseMultipart(body.raw);
+        let fields, how;
+        if (Array.isArray(body.fields)) {
+          const src = body.copyOf ? drafts.find((x) => x.key === body.copyOf) : null;
+          fields = normalizeFields(body.fields, src ? src.fields : []);
+          how = src ? `「${src.label}」を複製して編集` : "画面で入力";
+        } else { fields = parseMultipart(body.raw); how = "Payloadの貼り付け"; }
         const title = fields.find((f) => f.name === "name")?.value || "";
-        const d = { key: uuid(), label: String(body.label || "").trim() || title.slice(0, 40) || `下書き${draftId}`, draftId, fields, repeat: true, enabled: true, publishedCount: 0, createdAt: Date.now() };
+        const now = Date.now();
+        const d = { key: uuid(), label: cleanLabel(body.label) || title.slice(0, 40) || `下書き${draftId}`, draftId, fields, repeat: true, enabled: body.enabled === false ? false : true, publishedCount: 0, createdAt: now, updatedAt: now };
         drafts.push(d);
         await save(env, "drafts", drafts);
-        await adminLog(env, `下書きを追加しました: #${draftId}「${d.label}」(${fields.length}項目)`);
+        await adminLog(env, `下書きを追加しました(${how}): #${draftId}「${d.label}」(${fields.length}項目)`, { 価格: fields.find((f) => f.name === "price")?.value });
         return json({ ok: true, draft: draftSummary(d), fieldCount: fields.length });
       }
       if (method === "POST" && sub[1] === "order") {
@@ -245,14 +267,31 @@ async function handleApi(request, env, path) {
         return json({ ok: true });
       }
       const d = drafts.find((x) => x.key === sub[1]);
-      if (!d) throw new Error("下書きが見つかりません。");
+      if (!d) throw new Error("下書きが見つかりません。別の画面で削除された可能性があります。");
+      // 編集画面用: 全項目を返す
+      if (method === "GET") return json({ ok: true, draft: { ...draftSummary(d), fields: d.fields } });
       if (method === "PATCH") {
-        if ("label" in body) d.label = String(body.label).trim() || d.label;
+        // 編集画面を開いた後に別の場所で変更されていたら、上書きせずに知らせる
+        if (body.baseUpdatedAt !== undefined && (d.updatedAt || null) !== (body.baseUpdatedAt || null)) {
+          return json({ error: "この下書きは、編集画面を開いた後に別の画面で変更されました。いったん閉じて開き直してください。", conflict: true }, 409);
+        }
+        const changed = [];
+        if ("label" in body) { const v = cleanLabel(body.label); if (v && v !== d.label) { d.label = v; changed.push("管理名"); } }
         if ("enabled" in body) d.enabled = !!body.enabled;
-        if ("draftId" in body) { if (!/^\d+$/.test(String(body.draftId))) throw new Error("下書き番号は数字で入力してください。"); d.draftId = String(body.draftId); }
-        if (body.raw) d.fields = parseMultipart(body.raw);
+        if ("draftId" in body) { if (!/^\d+$/.test(String(body.draftId))) throw new Error("下書き番号は数字で入力してください。"); if (String(body.draftId) !== d.draftId) { d.draftId = String(body.draftId); changed.push("下書き番号"); } }
+        if (Array.isArray(body.fields)) {
+          const before = new Map(d.fields.filter((f) => !f.file).map((f, i) => [f.name + "#" + i, f.value]));
+          const next = normalizeFields(body.fields, d.fields);
+          const after = new Map(next.filter((f) => !f.file).map((f, i) => [f.name + "#" + i, f.value]));
+          for (const [k, v] of after) if (before.get(k) !== v) changed.push(k.split("#")[0]);
+          if (before.size !== after.size) changed.push(`項目数 ${before.size}→${after.size}`);
+          d.fields = next;
+        }
+        if (body.raw) { d.fields = parseMultipart(body.raw); changed.push("Payloadから全項目"); }
+        if (changed.length || "enabled" in body) d.updatedAt = Date.now();
         await save(env, "drafts", drafts);
-        return json({ ok: true, draft: draftSummary(d) });
+        if (changed.length) await adminLog(env, `下書きを編集しました: #${d.draftId}「${d.label}」`, { 変更した項目: [...new Set(changed)].join(", ") });
+        return json({ ok: true, draft: draftSummary(d), changed: [...new Set(changed)] });
       }
       if (method === "DELETE") {
         const state = await load(env, "state");
@@ -296,6 +335,41 @@ async function handleApi(request, env, path) {
       return json({ ok: true, ...r });
     }
 
+    // ===== 両サイトの状態をまとめて(画面上部の切り替えボタン用) =====
+    if (method === "GET" && sub[0] === "overview") {
+      const { netStatus } = await import("./net.mjs");
+      const now = Date.now();
+      const out = {};
+      await Promise.all(SITE_IDS.map(async (id) => {
+        const e = siteEnv(baseEnv, id);
+        try {
+          const [settings, state, secret, net, g] = await Promise.all([load(e, "settings"), load(e, "state"), load(e, "secret"), netStatus(db(e), now), db(e).getMany(["ext:info", "lastTick"])]);
+          const day = state.days[dayKey(now)] || { count: 0 };
+          out[id] = { name: SITES[id].name, paused: !!settings.paused, today: day.count || 0, limit: settings.dailyLimit, alert: state.alert ? state.alert.kind : null, session: !!secret.phpsessid, pauseUntil: net.pauseUntil || 0, ext: g["ext:info"] || null, lastTick: g.lastTick || null };
+        } catch (err) { out[id] = { name: SITES[id].name, error: err.message }; }
+      }));
+      return json({ now, sites: out });
+    }
+
+    // ===== 旧M&Aクラブ版(mac-scheduler)からの引っ越し =====
+    // wrangler.toml の OLD_MAC_STORE(旧ツールの保存領域)を読むだけ。旧ツール側は何も変えない。
+    // 実際の読み書きは、M&Aクラブの保存領域の中で行う(store.mjs の migrateFromOldMac)
+    if (sub[0] === "migrate-mac") {
+      const mac = siteEnv(baseEnv, "mac");
+      const dst = db(mac);
+      if (method === "GET") {
+        const [peek, done, cur] = await Promise.all([dst.peekOldMac().catch((e) => ({ bound: true, error: e.message })), dst.get("migrated:from"), load(mac, "drafts")]);
+        return json({ ok: true, old: peek, done: done || null, currentDrafts: cur.length });
+      }
+      if (method === "POST") {
+        const r = await dst.migrateFromOldMac({ force: !!body.force });
+        if (r.needForce) return json({ ok: false, needForce: true, message: "すでに引っ越し済みです。もう一度行うと、今のM&Aクラブ側の下書き・設定・ログイン情報は、旧ツールの内容で上書きされます。" });
+        if (!r.ok) throw new Error(r.message);
+        await adminLog(mac, `旧M&Aクラブ版からデータを引っ越しました(下書き${r.drafts}件・出品記録${r.logs}件・動作ログ${r.ops}件)。二重出品を防ぐため、停止中にしてあります`);
+        return json(r);
+      }
+    }
+
     if (method === "POST" && sub[0] === "hello") { await accessLog(env, request, "info", "管理画面にログインしました"); return json({ ok: true }); }
 
     // ===== 動作ログ(リアルタイム表示用) =====
@@ -319,7 +393,7 @@ async function handleApi(request, env, path) {
       const log = createLogger("manual");
       await log.enableLive(store);
       log.info("管理画面", "「今すぐ確認」が押されました");
-      const fetcher = createFetcher(store, log);
+      const fetcher = createFetcher(store, log, { site });
       const out = {};
       try {
         const secret = await load(env, "secret");
@@ -343,35 +417,36 @@ async function handleApi(request, env, path) {
 // 日本のサーバーが1分おきにこのURLを開くと、その通信には「日本」の札が付くので通れる(原因究明の実験で確定)。
 // 合言葉(k=)は保存領域に保存し、設定タブで確認・作り直しできる。
 async function extTick(request, env, url) {
+  const site = siteOfEnv(env);
   const st = db(env);
   const key = await st.get("ext:key");
   const k = url.searchParams.get("k") || "";
-  if (!key || !safeEqual(k, key)) { await accessLog(env, request, "warn", "日本からの外部起動を拒否しました(合言葉が違います)"); return json({ ok: false }, 401); }
+  if (!key || !safeEqual(k, key)) { await accessLog(env, request, "warn", `${site.name}の日本からの外部起動を拒否しました(合言葉が違います)`); return json({ ok: false }, 401); }
   const now = Date.now();
   const country = (request.cf && request.cf.country) || "?", colo = (request.cf && request.cf.colo) || "?";
   const g = await st.getMany(["ext:last", "ext:warnAt"]);
-  if (now - (g["ext:last"] || 0) < 40e3) return json({ ok: true, ran: false, reason: "前回の起動から40秒たっていないため、今回は処理しません" });
+  if (now - (g["ext:last"] || 0) < 40e3) return json({ ok: true, site: site.id, ran: false, reason: "前回の起動から40秒たっていないため、今回は処理しません" });
   const first = !g["ext:last"] || now - g["ext:last"] > 10 * 60e3;
   await st.put("ext:last", now);
   await st.put("ext:info", { at: now, country, colo });
   const { createLogger } = await import("./log.mjs");
   const l = createLogger("auto");
   if (first) {
-    l.info("システム", `日本からの外部起動が始まりました(起動元の国 ${country}・拠点 ${colo})。以後、Cloudflareの自動実行はゲームクラブに通信せず待機します`);
+    l.info("システム", `日本からの外部起動が始まりました(起動元の国 ${country}・拠点 ${colo})。以後、Cloudflareの自動実行は${site.name}に通信せず待機します`);
     if (country === "JP" && ((await st.get("net:pauseUntil")) || 0) > now) { await st.put("net:pauseUntil", 0); l.info("システム", "日本の札が付く起動になったため、通信の休止を解除しました"); }
   }
-  if (country !== "JP" && now - (g["ext:warnAt"] || 0) > 3600e3) { await st.put("ext:warnAt", now); l.warn("システム", `外部起動の国が日本(JP)ではありません(国 ${country})。ゲームクラブに止められる可能性があります。起動元のサーバーが日本にあるか確認してください`); }
+  if (country !== "JP" && now - (g["ext:warnAt"] || 0) > 3600e3) { await st.put("ext:warnAt", now); l.warn("システム", `外部起動の国が日本(JP)ではありません(国 ${country})。${site.name}に止められる可能性があります。起動元のサーバーが日本にあるか確認してください`); }
   await l.flush(st);
   try {
     const r = await tick(env, now);
-    return json({ ok: true, ran: true, country, colo, did: Object.keys(r || {}) });
-  } catch (e) { return json({ ok: false, ran: true, country, error: e.message }, 500); }
+    return json({ ok: true, site: site.id, ran: true, country, colo, did: Object.keys(r || {}) });
+  } catch (e) { return json({ ok: false, site: site.id, ran: true, country, error: e.message }, 500); }
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/ext-tick") return extTick(request, env, url);
+    if (url.pathname === "/ext-tick") return extTick(request, siteEnv(env, siteOf(url.searchParams.get("s")) || SITES.gc), url);
     // ===== リアルタイム表示の専用回線(WebSocket) =====
     // ブラウザの WebSocket は独自のヘッダーを付けられないので、パスワードは接続時の1回だけ k= で受け取る
     if (url.pathname === "/api/stream") {
@@ -385,37 +460,43 @@ export default {
       }
       if (!env.GC_STORE) return new Response("no store", { status: 500 });
       await accessLog(env, request, "debug", "リアルタイム表示の回線がつながりました");
-      return env.GC_STORE.get(env.GC_STORE.idFromName("main")).fetch(request);
+      const site = siteOf(url.searchParams.get("s")) || SITES.gc;
+      return env.GC_STORE.get(env.GC_STORE.idFromName(site.store)).fetch(request);
     }
 
     if (url.pathname.startsWith("/api/")) {
       const t0 = Date.now();
-      const res = await handleApi(request, env, url.pathname);
+      const senv = siteEnv(env, requestSite(request, url));
+      const res = await handleApi(request, senv, url.pathname, env);
       const key = `${request.method} ${url.pathname}`;
-      if (!POLLING.has(key) && res.status !== 401) await accessLog(env, request, res.status >= 400 ? "warn" : "debug", `管理画面の操作: ${key} → 応答${res.status}(${Date.now() - t0}ms)`);
+      if (!POLLING.has(key) && res.status !== 401) await accessLog(senv, request, res.status >= 400 ? "warn" : "debug", `管理画面の操作: ${key} → 応答${res.status}(${Date.now() - t0}ms)`);
       return res;
     }
-    if (url.pathname === "/health") return json({ ok: true, storeBound: !!env.GC_STORE, passwordSet: !!env.ADMIN_PASSWORD });
+    if (url.pathname === "/health") return json({ ok: true, storeBound: !!env.GC_STORE, passwordSet: !!env.ADMIN_PASSWORD, sites: SITE_IDS, oldMacBound: !!env.OLD_MAC_STORE });
     if (url.pathname === "/" || url.pathname === "/index.html") await accessLog(env, request, "info", "管理画面が開かれました");
     return new Response(PAGE, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" } });
   },
-  // waitUntil を使うと約30秒で打ち切られるため、処理を直接待つ
+  // waitUntil を使うと約30秒で打ち切られるため、処理を直接待つ。
+  // サイトごとに順番に処理する(片方でエラーが起きても、もう片方は動く)
   async scheduled(event, env, ctx) {
-    // 日本からの外部起動が動いている間(最後の起動から3分以内)は、こちらは何もしない
-    // (アメリカの札でゲームクラブに通信すると止められ、60分休止を招くため)
-    try {
-      const st = db(env);
-      const last = (await st.get("ext:last")) || 0;
-      if (Date.now() - last < 3 * 60e3) {
-        if (Date.now() - ((await st.get("ext:idleLog")) || 0) > 3600e3) {
-          await st.put("ext:idleLog", Date.now());
-          const { createLogger } = await import("./log.mjs"); const l = createLogger("auto");
-          l.debug("定期実行", "日本からの外部起動が動いているため、Cloudflareの自動実行は待機しています(このメッセージは1時間に1回)"); await l.flush(st);
+    for (const id of SITE_IDS) {
+      const senv = siteEnv(env, id);
+      // 日本からの外部起動が動いている間(最後の起動から3分以内)は、そのサイトは何もしない
+      // (アメリカの札でサイトに通信すると止められ、60分休止を招くため)
+      try {
+        const st = db(senv);
+        const last = (await st.get("ext:last")) || 0;
+        if (Date.now() - last < 3 * 60e3) {
+          if (Date.now() - ((await st.get("ext:idleLog")) || 0) > 3600e3) {
+            await st.put("ext:idleLog", Date.now());
+            const { createLogger } = await import("./log.mjs"); const l = createLogger("auto");
+            l.debug("定期実行", "日本からの外部起動が動いているため、Cloudflareの自動実行は待機しています(このメッセージは1時間に1回)"); await l.flush(st);
+          }
+          continue;
         }
-        return;
-      }
-    } catch {}
-    try { const r = await tick(env); console.log("tick", JSON.stringify(r)); }
-    catch (e) { console.log("tick error", e.message); }
+      } catch {}
+      try { const r = await tick(senv); console.log("tick", id, JSON.stringify(r)); }
+      catch (e) { console.log("tick error", id, e.message); }
+    }
   },
 };

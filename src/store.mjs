@@ -2,6 +2,9 @@
 // KV は反映に時間がかかり二重出品の原因になったため、こちらを使う。
 import { DurableObject } from "cloudflare:workers";
 
+// 旧M&Aクラブ版から引っ越すキー(下書き・設定・ログイン情報・売れ行きの記録・31分ルールのロックなど)
+const MIGRATE_KEYS = ["settings", "secret", "drafts", "state", "own", "lock:last", "lastOwnScan", "lastOptimize"];
+
 export class GcStore extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
@@ -139,15 +142,17 @@ export class GcStore extends DurableObject {
     return all.slice(0, limit);
   }
   // before より古いログ(「さらに古いログを読む」用)
+  // まとまり(1回の処理のログ)の途中で切ると、次に読むときにその残りが飛ばされるので、
+  // limit 件を超えても「まとまり単位」で丸ごと返す
   async listOpsBefore(limit = 500, before = "") {
     const opt = { prefix: "opb:", reverse: true, limit: 80 };
     if (before) opt.end = "opb:" + before;
     const m = await this.ctx.storage.list(opt);
     let all = [];
-    for (const v of m.values()) all = all.concat(v.e || []);
+    for (const v of m.values()) { all = all.concat(v.e || []); if (all.length >= limit) break; }
     if (before) all = all.filter((e) => e.id < before);
     all.sort((a, b) => (a.id < b.id ? 1 : -1));
-    return all.slice(0, limit);
+    return all;
   }
   // 画面のログ取得を1回の呼び出しで(呼び出し回数の節約)
   async opsWithNet(limit, after, now) {
@@ -168,6 +173,76 @@ export class GcStore extends DurableObject {
     for (let i = 0; i < del.length; i += 120) await this.ctx.storage.delete(del.slice(i, i + 120));
     return del.length;
   }
+  // ===== 旧M&Aクラブ版からの引っ越し(受け入れ側) =====
+  // 呼び出し回数を節約するため、設定・出品記録・動作ログをまとめて1回で受け取って書き込む。
+  //   kv:   { キー: 値 }(settings / drafts / own など)
+  //   logs: 出品記録の配列(id 付き)
+  //   ops:  動作ログの配列(id 付き。300件ずつのまとまりにして保存)
+  async importBundle({ kv = {}, logs = [], ops = [] } = {}) {
+    const entries = Object.entries(kv).filter(([, v]) => v !== null && v !== undefined);
+    for (let i = 0; i < entries.length; i += 100) await this.ctx.storage.put(Object.fromEntries(entries.slice(i, i + 100)));
+    const lg = logs.filter((l) => l && l.id).map((l) => ["log:" + l.id, l]);
+    for (let i = 0; i < lg.length; i += 100) await this.ctx.storage.put(Object.fromEntries(lg.slice(i, i + 100)));
+    const sorted = ops.filter((o) => o && o.id).sort((a, b) => (a.id < b.id ? -1 : 1));
+    let batches = 0;
+    for (let i = 0; i < sorted.length; i += 300) {
+      const chunk = sorted.slice(i, i + 300);
+      await this.ctx.storage.put("opb:" + chunk[chunk.length - 1].id, { e: chunk });
+      batches++;
+    }
+    return { keys: entries.length, logs: lg.length, ops: sorted.length, batches };
+  }
+
+  // ===== 旧M&Aクラブ版からの引っ越し(読み取り側) =====
+  // 旧ツール(mac-scheduler)の保存領域から、この保存領域が直接読み取る。
+  // 重い処理を Worker ではなく保存領域の中で行うので、無料プランの処理時間の制限にかかりにくい。
+  _oldMac() {
+    const e = this.env || {};
+    if (e.__oldMac) return e.__oldMac;
+    return e.OLD_MAC_STORE ? e.OLD_MAC_STORE.get(e.OLD_MAC_STORE.idFromName("main")) : null;
+  }
+  async peekOldMac() {
+    const old = this._oldMac();
+    if (!old) return { bound: false };
+    const g = await old.getMany(MIGRATE_KEYS);
+    const drafts = Array.isArray(g.drafts) ? g.drafts : [];
+    return {
+      bound: true, drafts: drafts.length, draftLabels: drafts.slice(0, 10).map((d) => d.label),
+      session: !!(g.secret && g.secret.phpsessid), own: g.own && g.own.records ? Object.keys(g.own.records).length : 0,
+      paused: g.settings ? !!g.settings.paused : null, empty: !g.settings && !g.drafts,
+    };
+  }
+  async migrateFromOldMac({ force = false } = {}) {
+    const old = this._oldMac();
+    if (!old) return { ok: false, message: "旧M&Aクラブ版の保存領域につながっていません(wrangler.toml の OLD_MAC_STORE)。" };
+    const done = await this.ctx.storage.get("migrated:from");
+    if (done && !force) return { ok: false, needForce: true, doneAt: done.at };
+    const g = await old.getMany(MIGRATE_KEYS);
+    if (!g.settings && !g.drafts) return { ok: false, message: "旧M&Aクラブ版にデータが見つかりませんでした。" };
+    const kv = {};
+    for (const k of MIGRATE_KEYS) if (g[k] != null) kv[k] = g[k];
+    // 引っ越し直後は必ず「停止中」にする(旧ツールと二重に出品しないため)
+    kv.settings = { ...(g.settings || {}), paused: true };
+    const logs = await old.listLogs(3000).catch(() => []);
+    let ops = [];
+    if (!done) {
+      // 動作ログ(7日分)も持ってくる。多すぎるときは新しい方から6000件まで(2回目以降は重複するので持ってこない)
+      // 旧ツールの読み取りは「まとまり」の途中で切れることがあるので、件数の上限を大きくして丸ごと受け取る
+      let before = "";
+      for (let i = 0; i < 40 && ops.length < 6000; i++) {
+        const page = await old.listOpsBefore(1e9, before).catch(() => []);
+        if (!page.length) break;
+        ops = ops.concat(page);
+        before = page[page.length - 1].id;
+      }
+      ops = ops.slice(0, 6000);
+    }
+    const r = await this.importBundle({ kv, logs, ops });
+    const info = { at: Date.now(), drafts: Array.isArray(g.drafts) ? g.drafts.length : 0, logs: r.logs, ops: r.ops, session: !!(g.secret && g.secret.phpsessid) };
+    await this.ctx.storage.put("migrated:from", info);
+    return { ok: true, ...info };
+  }
+
   // 複数のキーを1回で読む(呼び出し回数の節約)
   async getMany(keys) {
     const m = await this.ctx.storage.get(keys);

@@ -1,5 +1,5 @@
 {
-  "name": "gameclub-scheduler-cf",
+  "name": "club-scheduler",
   "private": true,
   "type": "module",
   "scripts": {

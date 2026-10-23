@@ -109,7 +109,7 @@ export async function scanOwn(store, session, fetcher, log, now = Date.now()) {
     } else log.debug("売れ行き", "初回のため、次回からタブの中身の変化を記録します");
     // 「見えなくなった」の判定は取引中タブの商品だけ(完了タブは1ページ目しか見ないため、押し出された古い商品は対象外)
     own.snap = snap;
-    log.debug("売れ行き", `対象外として無視: 他カテゴリ(にゃんこ大戦争など)${ignored.cat}件・ツール以外の出品${ignored.notTool}件`, ignored);
+    log.debug("売れ行き", `対象外として無視: 他カテゴリ(X以外)${ignored.cat}件・ツール以外の出品${ignored.notTool}件`, ignored);
 
     // 未読のない取引だけ、販売日時を取りに行く
     for (let i = 0; i < CHATS_PER_SCAN && own.chatQueue.length; i++) {

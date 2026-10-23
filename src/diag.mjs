@@ -20,7 +20,7 @@ async function one(store, url, init) {
   } catch (e) { return { error: String(e.message || e), ms: Date.now() - t0 }; }
 }
 
-export async function runDiag(store, session, ctx) {
+export async function runDiag(store, session, ctx, origin = GC) {
   const at = Date.now();
   const h = { "User-Agent": UA, "Accept-Language": "ja", Accept: "text/html" };
   // ③ Cloudflareの診断ページ: 相手(Cloudflare上のサイト)から、この通信が「どの国の・どんなアドレス」に見えているか
@@ -29,9 +29,9 @@ export async function runDiag(store, session, ctx) {
   const ip = g("ip");
   const seen = { colo: g("colo"), loc: g("loc"), ipKind: !ip ? "不明" : isCfIp(ip) ? "Cloudflareのアドレス" : ip.includes(":") ? "IPv6(Cloudflare以外)" : "IPv4(Cloudflare以外)", error: tr.error };
   // ① トップページ(ログインなし)
-  const top = await one(store, GC + "/", { redirect: "manual", headers: h });
+  const top = await one(store, origin + "/", { redirect: "manual", headers: h });
   // ② マイページ(ログインあり)
-  const my = session ? await one(store, GC + "/mypage", { redirect: "manual", headers: { ...h, Cookie: `PHPSESSID=${session}` } }) : { skipped: true };
+  const my = session ? await one(store, origin + "/mypage", { redirect: "manual", headers: { ...h, Cookie: `PHPSESSID=${session}` } }) : { skipped: true };
   const strip = (x) => { const { _t, ...o } = x; return o; };
   return { at, ctx, seen, top: strip(top), mypage: strip(my) };
 }

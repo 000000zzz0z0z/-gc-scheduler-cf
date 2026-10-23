@@ -3,20 +3,29 @@ main = "src/index.mjs"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# 1分おきに自動実行(予定時刻を過ぎた枠があれば出品)
+# 1分おきに自動実行(予定時刻を過ぎた枠があれば出品)。
+# ゲームクラブ・M&Aクラブの両方を順番に処理する(日本からの外部起動が動いているサイトは待機)
 [triggers]
 crons = ["* * * * *"]
 
 # 保存領域(二重出品を防ぐため、常に最新の値を返すDurable Objectを使います)
+# サイトごとに別の箱を使います(ゲームクラブ="main"、M&Aクラブ="mac-main")。データは混ざりません。
 [[durable_objects.bindings]]
 name = "GC_STORE"
 class_name = "GcStore"
+
+# 旧M&Aクラブ版(mac-scheduler)の保存領域。設定タブの「旧M&Aクラブ版から引っ越す」で読むだけに使います。
+# 引っ越しが終わって旧ツールを削除するときは、先にこの3行を消してから更新してください。
+[[durable_objects.bindings]]
+name = "OLD_MAC_STORE"
+class_name = "GcStore"
+script_name = "mac-scheduler"
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["GcStore"]
 
-# 以前の保存領域。中身を自動で引っ越すために残しています。
+# 以前の保存領域。中身を自動で引っ越すために残しています(ゲームクラブだけが使います)。
 [[kv_namespaces]]
 binding = "GC_KV"
 id = "152d539fffa34fc98d1d74b36851dc5f"

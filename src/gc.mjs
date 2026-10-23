@@ -1,9 +1,12 @@
-// ゲームクラブとの通信と、時刻・スケジュール計算などの「純粋な」処理。
+// サイト(ゲームクラブ/M&Aクラブ)との通信と、時刻・スケジュール計算などの「純粋な」処理。
 // ストレージには触らないので、単体でテストできます。
+// どのサイトに送るかは、通信の窓口(fetcher)が持っているサイト情報(fetcher.site)で決まる。
 import { randomUUID } from "node:crypto";
+import { DEFAULT_SITE } from "./sites.mjs";
 
-export const GC = "https://gameclub.jp";
-// ゲームクラブ運営の了承を得たうえで、通常のブラウザと同じ名乗りを使います
+export const GC = DEFAULT_SITE.origin; // 互換のため残す(fetcher にサイト情報がないときの送り先)
+const siteOfFetcher = (fetcher) => (fetcher && fetcher.site) || DEFAULT_SITE;
+// 運営の了承を得たうえで、通常のブラウザと同じ名乗りを使います
 export const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0";
 
 const JST = 9 * 3600e3;
@@ -82,8 +85,8 @@ export function parseMultipart(raw) {
   return fields;
 }
 
-export function buildMultipart(fields) {
-  const b = "----GCSchedulerBoundary" + randomUUID().replace(/-/g, "");
+export function buildMultipart(fields, prefix = DEFAULT_SITE.boundary) {
+  const b = prefix + randomUUID().replace(/-/g, "");
   let out = "";
   for (const f of fields) {
     out += `--${b}\r\n`;
@@ -98,7 +101,7 @@ export function buildMultipart(fields) {
 }
 
 // 出品期限(limit_day / limit_time)を常に遠い未来(約100年後)に設定する。
-// ゲームクラブのフォームは日時が必須のため「無期限」そのものにはできないが、
+// サイトのフォームは日時が必須のため「無期限」そのものにはできないが、
 // 100年後にすることで、期限切れで出品が消えることは実質なくなる。
 export function prepareFields(fields, now) {
   const p = jstParts(now + 100 * 365 * 24 * 3600e3);
@@ -117,7 +120,7 @@ function cleanSession(s) {
 export async function gcFetch(path, session, opts = {}, fetcher = null, meta = {}) {
   const f = fetcher || ((u, i) => fetch(u, i));
   const { headers, ...rest } = opts;
-  return f(GC + path, {
+  return f(siteOfFetcher(fetcher).origin + path, {
     ...rest,
     redirect: "manual",
     headers: { "User-Agent": UA, "Accept-Language": "ja", ...(session ? { Cookie: `PHPSESSID=${cleanSession(session)}` } : {}), ...(headers || {}) },
@@ -153,9 +156,12 @@ function summarizeErrors(j) {
 }
 
 export async function publishDraft(draft, session, { now = Date.now(), fetcher = null } = {}) {
+  const site = siteOfFetcher(fetcher);
   const fields = prepareFields(draft.fields, now);
-  const { body, contentType } = buildMultipart(fields);
-  const path = `/mypage/products/add?draft=${encodeURIComponent(draft.draftId)}`;
+  const { body, contentType } = buildMultipart(fields, site.boundary);
+  // M&Aクラブはブラウザでも add?draft=番号&subcategory_item_id=カテゴリ番号 の形で送っているので、それに合わせる
+  const sub = site.subcatInPath ? String((draft.fields.find((f) => f.name === "subcategory_item_id") || {}).value || "").trim() : "";
+  const path = `/mypage/products/add?draft=${encodeURIComponent(draft.draftId)}${sub ? `&subcategory_item_id=${encodeURIComponent(sub)}` : ""}`;
   let res;
   try {
     res = await gcFetch(path, session, {
@@ -165,8 +171,8 @@ export async function publishDraft(draft, session, { now = Date.now(), fetcher =
         "Content-Type": contentType,
         Accept: "application/json, text/javascript, */*; q=0.01",
         "X-Requested-With": "XMLHttpRequest",
-        Origin: GC,
-        Referer: GC + path,
+        Origin: site.origin,
+        Referer: site.origin + path,
       },
     }, fetcher, { cat: "出品", what: `出品を送信(下書き #${draft.draftId})` });
   } catch (e) {
@@ -215,3 +221,34 @@ export async function testConnection(session, { fetcher = null } = {}) {
     : out({ ok: false, kind: "session", status: 200, message: `ページは開けましたが、ログイン状態を確認できませんでした(ページ名: ${title || "不明"})` });
 }
 
+// ===== 下書きの編集(画面で直接入力された項目のチェック) =====
+// 画面から届いた項目の一覧を、保存してよい形に整える。おかしければ分かりやすい言葉でエラーにする。
+// ・文字の項目は {name, value}。ファイルの項目(動画など)は中身を持たないので、元の下書きのものを使う
+// ・商品名と価格は必須。価格は半角数字だけ
+export const EDITABLE_LIMITS = { name: 200, detail: 20000, other: 20000 };
+export function normalizeFields(input, original = []) {
+  if (!Array.isArray(input) || !input.length) throw new Error("項目が空です。");
+  const files = original.filter((f) => f.file);
+  const out = [];
+  for (const raw of input) {
+    if (!raw || typeof raw.name !== "string" || !raw.name.trim()) throw new Error("名前のない項目があります。");
+    const name = raw.name.trim();
+    if (!/^[A-Za-z0-9_\[\]\-.]{1,80}$/.test(name)) throw new Error(`項目名「${name}」に使えない文字が入っています。`);
+    if (raw.file) {
+      const src = files.find((f) => f.name === name);
+      out.push(src ? { ...src } : { name, value: "", file: true, filename: "", ctype: "application/octet-stream" });
+      continue;
+    }
+    const value = String(raw.value ?? "").replace(/\r\n?/g, "\n");
+    const max = EDITABLE_LIMITS[name] || EDITABLE_LIMITS.other;
+    if (value.length > max) throw new Error(`「${name}」が長すぎます(${value.length}文字・上限${max}文字)。`);
+    out.push({ name, value });
+  }
+  const title = out.find((f) => f.name === "name");
+  if (!title || !title.value.trim()) throw new Error("商品名を入力してください。");
+  const price = out.find((f) => f.name === "price");
+  if (!price) throw new Error("価格の項目がありません。");
+  price.value = price.value.trim().replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/[,，円]/g, "");
+  if (!/^\d{1,9}$/.test(price.value)) throw new Error("価格は数字だけで入力してください(例: 3333)。");
+  return out;
+}

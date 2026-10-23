@@ -12,6 +12,8 @@ export const PAGE = `<!doctype html>
   --ink:#eafff2; --mut:#7fa6a0; --mut2:#51615f;
   --green:#39ff8b; --green-d:#0a6b3a; --pink:#ff2d95; --pink-d:#8a0f4a;
   --cyan:#38f5e6; --amber:#ffd23c; --bad:#ff5a5a;
+  --g3:57,255,139; --c3:56,245,230; --panel3:14,18,30; --deep3:5,7,12; --mut3:127,166,160;
+  --green2:#2be38a; --on-green:#042012; --fail:var(--pink); --fail3:255,45,149;
   --r:16px; --r2:11px;
   --glow-g:0 0 10px rgba(57,255,139,.55),0 0 24px rgba(57,255,139,.28);
   --glow-p:0 0 10px rgba(255,45,149,.6),0 0 26px rgba(255,45,149,.3);
@@ -23,9 +25,9 @@ html,body{margin:0}
 body{
   background:var(--bg);color:var(--ink);font-size:15px;line-height:1.6;min-height:100vh;-webkit-text-size-adjust:100%;
   background-image:
-    radial-gradient(1200px 600px at 15% -10%,rgba(57,255,139,.10),transparent 60%),
+    radial-gradient(1200px 600px at 15% -10%,rgba(var(--g3),.10),transparent 60%),
     radial-gradient(1000px 500px at 100% 0%,rgba(255,45,149,.10),transparent 55%),
-    linear-gradient(transparent 0 97%,rgba(57,255,139,.05) 97% 100%);
+    linear-gradient(transparent 0 97%,rgba(var(--g3),.05) 97% 100%);
   background-size:auto,auto,100% 3px;
   position:relative;overflow-x:hidden;
 }
@@ -34,7 +36,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
   background:repeating-linear-gradient(0deg,rgba(0,0,0,0) 0 2px,rgba(0,0,0,.14) 2px 3px);mix-blend-mode:multiply;opacity:.5}
 /* ふわっと動くグロー背景 */
 body::after{content:"";position:fixed;inset:-20%;pointer-events:none;z-index:0;opacity:.5;
-  background:radial-gradient(400px 400px at 50% 50%,rgba(56,245,230,.06),transparent 70%);
+  background:radial-gradient(400px 400px at 50% 50%,rgba(var(--c3),.06),transparent 70%);
   animation:drift 22s ease-in-out infinite alternate}
 @keyframes drift{0%{transform:translate(-8%,-6%)}100%{transform:translate(10%,8%)}}
 
@@ -58,18 +60,18 @@ h1 .p{color:var(--pink);text-shadow:var(--glow-p)}
 /* ===== カード ===== */
 .card{position:relative;background:var(--panel);backdrop-filter:blur(8px);border:1px solid var(--line);
   border-radius:var(--r);padding:17px;margin-bottom:15px;overflow:hidden;
-  box-shadow:0 0 0 1px rgba(57,255,139,.04),0 10px 40px rgba(0,0,0,.5),inset 0 0 30px rgba(57,255,139,.03)}
+  box-shadow:0 0 0 1px rgba(var(--g3),.04),0 10px 40px rgba(0,0,0,.5),inset 0 0 30px rgba(var(--g3),.03)}
 .card::before{content:"";position:absolute;left:0;top:0;height:2px;width:100%;
   background:linear-gradient(90deg,transparent,var(--green),var(--cyan),var(--pink),transparent);opacity:.7}
-.card h2{font-size:13px;margin:0 0 13px;font-weight:700;letter-spacing:.12em;color:var(--green);text-shadow:0 0 8px rgba(57,255,139,.4)}
+.card h2{font-size:13px;margin:0 0 13px;font-weight:700;letter-spacing:.12em;color:var(--green);text-shadow:0 0 8px rgba(var(--g3),.4)}
 .card h2 .q{color:var(--mut2);font-weight:400;font-size:11px;margin-left:8px;letter-spacing:.06em;text-shadow:none}
 
 label{display:block;font-size:11.5px;color:var(--mut);margin:0 0 6px;letter-spacing:.08em}
 .field{margin-bottom:13px}
 input[type=text],input[type=number],input[type=password],select,textarea{
-  width:100%;background:rgba(5,7,12,.7);border:1px solid rgba(57,255,139,.22);color:var(--ink);
+  width:100%;background:rgba(var(--deep3),.7);border:1px solid rgba(var(--g3),.22);color:var(--ink);
   border-radius:var(--r2);padding:11px 13px;outline:none;transition:border-color .15s,box-shadow .15s}
-input:focus,select:focus,textarea:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(57,255,139,.15),var(--glow-g)}
+input:focus,select:focus,textarea:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(var(--g3),.15),var(--glow-g)}
 textarea{resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.5}
 select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--green) 50%),linear-gradient(135deg,var(--green) 50%,transparent 50%);background-position:calc(100% - 18px) center,calc(100% - 13px) center;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 
@@ -77,13 +79,13 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .row>*{flex:1;min-width:120px}
 
 /* ===== ボタン ===== */
-.btn{position:relative;background:rgba(5,7,12,.6);border:1px solid rgba(57,255,139,.35);color:var(--green);
+.btn{position:relative;background:rgba(var(--deep3),.6);border:1px solid rgba(var(--g3),.35);color:var(--green);
   border-radius:var(--r2);padding:11px 18px;font-size:14px;font-weight:700;letter-spacing:.05em;
-  transition:all .13s;text-shadow:0 0 6px rgba(57,255,139,.3);overflow:hidden}
-.btn:hover{box-shadow:var(--glow-g);border-color:var(--green);background:rgba(57,255,139,.08)}
+  transition:all .13s;text-shadow:0 0 6px rgba(var(--g3),.3);overflow:hidden}
+.btn:hover{box-shadow:var(--glow-g);border-color:var(--green);background:rgba(var(--g3),.08)}
 .btn:active{transform:translateY(1px) scale(.99)}
-.btn.p{background:linear-gradient(135deg,var(--green),#2be38a);border-color:var(--green);color:#042012;text-shadow:none;box-shadow:var(--glow-g)}
-.btn.p:hover{filter:brightness(1.12);box-shadow:0 0 16px rgba(57,255,139,.7),0 0 34px rgba(57,255,139,.4)}
+.btn.p{background:linear-gradient(135deg,var(--green),var(--green2));border-color:var(--green);color:var(--on-green);text-shadow:none;box-shadow:var(--glow-g)}
+.btn.p:hover{filter:brightness(1.12);box-shadow:0 0 16px rgba(var(--g3),.7),0 0 34px rgba(var(--g3),.4)}
 .btn.pink{border-color:rgba(255,45,149,.45);color:var(--pink);text-shadow:0 0 6px rgba(255,45,149,.3)}
 .btn.pink:hover{box-shadow:var(--glow-p);border-color:var(--pink);background:rgba(255,45,149,.08)}
 .btn.sm{padding:6px 12px;font-size:12px;font-weight:600;letter-spacing:.03em}
@@ -102,13 +104,13 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .tabs button{flex:1;background:transparent;border:0;color:var(--mut);padding:10px 5px;border-radius:9px;
   font-size:12.5px;font-weight:700;letter-spacing:.04em;transition:all .15s;position:relative}
 .tabs button:hover{color:var(--ink)}
-.tabs button.on{color:#042012;background:linear-gradient(135deg,var(--green),#2be38a);box-shadow:var(--glow-g)}
+.tabs button.on{color:var(--on-green);background:linear-gradient(135deg,var(--green),var(--green2));box-shadow:var(--glow-g)}
 
 /* ===== バッジ・ピル ===== */
 .pill{display:inline-block;font-size:10.5px;padding:2px 9px;border-radius:999px;border:1px solid var(--mut2);color:var(--mut);letter-spacing:.06em;white-space:nowrap}
-.pill.ok{color:var(--green);border-color:rgba(57,255,139,.5);box-shadow:0 0 8px rgba(57,255,139,.2);text-shadow:0 0 6px rgba(57,255,139,.4)}
+.pill.ok{color:var(--green);border-color:rgba(var(--g3),.5);box-shadow:0 0 8px rgba(var(--g3),.2);text-shadow:0 0 6px rgba(var(--g3),.4)}
 .pill.off{color:var(--mut2);border-color:var(--mut2)}
-.pill.rep{color:var(--cyan);border-color:rgba(56,245,230,.5);text-shadow:0 0 6px rgba(56,245,230,.4)}
+.pill.rep{color:var(--cyan);border-color:rgba(var(--c3),.5);text-shadow:0 0 6px rgba(var(--c3),.4)}
 .pill.pink{color:var(--pink);border-color:rgba(255,45,149,.5);text-shadow:0 0 6px rgba(255,45,149,.4)}
 
 .muted{color:var(--mut);font-size:12.5px}
@@ -120,38 +122,38 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .banner{position:relative;border-radius:var(--r);padding:13px 15px;margin-bottom:14px;font-size:13.5px;display:flex;gap:11px;align-items:flex-start;overflow:hidden}
 .banner.bad{background:rgba(255,45,149,.1);border:1px solid var(--pink);box-shadow:var(--glow-p)}
 .banner.warn{background:rgba(255,210,60,.08);border:1px solid rgba(255,210,60,.4)}
-.banner.info{background:rgba(56,245,230,.07);border:1px solid rgba(56,245,230,.35)}
+.banner.info{background:rgba(var(--c3),.07);border:1px solid rgba(var(--c3),.35)}
 .banner .x{margin-left:auto}
 
 /* ===== 下書き ===== */
 .draft{position:relative;border:1px solid var(--line);border-radius:var(--r2);padding:12px 14px;margin-bottom:10px;
-  background:rgba(5,7,12,.5);transition:border-color .15s,box-shadow .15s}
-.draft:hover{border-color:rgba(57,255,139,.4)}
+  background:rgba(var(--deep3),.5);transition:border-color .15s,box-shadow .15s}
+.draft:hover{border-color:rgba(var(--g3),.4)}
 .draft.dis{opacity:.45}
-.draft.next{border-color:var(--green);box-shadow:var(--glow-g),inset 0 0 20px rgba(57,255,139,.05)}
+.draft.next{border-color:var(--green);box-shadow:var(--glow-g),inset 0 0 20px rgba(var(--g3),.05)}
 .draft .top{display:flex;align-items:center;gap:9px}
 .draft .nm{font-weight:700;font-size:14px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.02em}
 .draft .meta{font-size:11px;color:var(--mut);margin-top:4px;letter-spacing:.03em}
-.draft .meta b{color:var(--green);text-shadow:0 0 6px rgba(57,255,139,.4)}
+.draft .meta b{color:var(--green);text-shadow:0 0 6px rgba(var(--g3),.4)}
 .draft .acts{display:flex;gap:5px;margin-top:10px;flex-wrap:wrap}
 .grip{color:var(--mut2);cursor:grab;font-size:17px;line-height:1;touch-action:none;padding:0 3px}
 .grip:hover{color:var(--green)}
 
 /* ===== スロット ===== */
 .slots{display:flex;flex-wrap:wrap;gap:7px;margin-top:4px}
-.slot{font-size:12px;padding:4px 10px;border-radius:8px;border:1px solid rgba(57,255,139,.2);color:var(--mut);font-variant-numeric:tabular-nums;letter-spacing:.03em;transition:all .15s}
-.slot.done{background:rgba(57,255,139,.15);border-color:var(--green);color:var(--green);text-shadow:0 0 6px rgba(57,255,139,.5);box-shadow:0 0 10px rgba(57,255,139,.2)}
+.slot{font-size:12px;padding:4px 10px;border-radius:8px;border:1px solid rgba(var(--g3),.2);color:var(--mut);font-variant-numeric:tabular-nums;letter-spacing:.03em;transition:all .15s}
+.slot.done{background:rgba(var(--g3),.15);border-color:var(--green);color:var(--green);text-shadow:0 0 6px rgba(var(--g3),.5);box-shadow:0 0 10px rgba(var(--g3),.2)}
 .slot.failed{background:rgba(255,70,70,.18);border-color:#ff4646;color:#ff6b6b;text-shadow:0 0 7px rgba(255,70,70,.6);box-shadow:0 0 10px rgba(255,70,70,.25)}
 .slot.skipped{color:var(--mut2);text-decoration:line-through;border-color:var(--mut2)}
-.slot.now{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 12px rgba(56,245,230,.5);animation:pulse 1.4s infinite}
+.slot.now{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 12px rgba(var(--c3),.5);animation:pulse 1.4s infinite}
 
 /* ===== ログ ===== */
-.log{display:flex;gap:11px;padding:10px 3px;border-bottom:1px solid rgba(57,255,139,.08);font-size:12.5px;align-items:flex-start}
+.log{display:flex;gap:11px;padding:10px 3px;border-bottom:1px solid rgba(var(--g3),.08);font-size:12.5px;align-items:flex-start}
 .log:last-child{border-bottom:0}
 .log .t{color:var(--mut);white-space:nowrap;font-variant-numeric:tabular-nums;letter-spacing:.03em}
 .log .m{flex:1;min-width:0}
 .ico{width:7px;height:7px;border-radius:50%;margin-top:7px;flex:none}
-.ico.ok{background:var(--green);box-shadow:0 0 8px rgba(57,255,139,.6)}
+.ico.ok{background:var(--green);box-shadow:0 0 8px rgba(var(--g3),.6)}
 .ico.ng{background:var(--pink);box-shadow:0 0 8px rgba(255,45,149,.6)}
 
 /* ===== ヒートマップ ===== */
@@ -165,10 +167,10 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 /* ===== トグルスイッチ ===== */
 .switch{display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
 .switch input{display:none}
-.track{width:46px;height:25px;border-radius:999px;background:rgba(5,7,12,.8);border:1px solid var(--mut2);position:relative;transition:all .2s;flex:none}
+.track{width:46px;height:25px;border-radius:999px;background:rgba(var(--deep3),.8);border:1px solid var(--mut2);position:relative;transition:all .2s;flex:none}
 .track::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:50%;background:var(--mut);transition:all .2s}
-.switch input:checked+.track{background:rgba(57,255,139,.2);border-color:var(--green);box-shadow:var(--glow-g)}
-.switch input:checked+.track::after{left:23px;background:var(--green);box-shadow:0 0 10px rgba(57,255,139,.8)}
+.switch input:checked+.track{background:rgba(var(--g3),.2);border-color:var(--green);box-shadow:var(--glow-g)}
+.switch input:checked+.track::after{left:23px;background:var(--green);box-shadow:0 0 10px rgba(var(--g3),.8)}
 
 /* ===== トースト ===== */
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(10px);
@@ -179,7 +181,7 @@ select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,va
 .toast.bad{border-color:var(--pink);box-shadow:var(--glow-p),0 10px 30px rgba(0,0,0,.6)}
 
 .center{text-align:center;color:var(--mut);padding:28px 0;letter-spacing:.04em}
-code{background:rgba(5,7,12,.8);padding:2px 7px;border-radius:5px;font-size:12px;color:var(--cyan);border:1px solid rgba(56,245,230,.2)}
+code{background:rgba(var(--deep3),.8);padding:2px 7px;border-radius:5px;font-size:12px;color:var(--cyan);border:1px solid rgba(var(--c3),.2)}
 details.help{margin-top:9px}
 details.help summary{color:var(--cyan);font-size:12.5px;cursor:pointer;letter-spacing:.03em}
 details.help div{font-size:12.5px;color:var(--mut);margin-top:8px;line-height:1.8}
@@ -208,19 +210,19 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
 .legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:11px;color:var(--mut);letter-spacing:.03em}
 .legend span{display:inline-flex;align-items:center;gap:6px}
 .legend i.lg{width:12px;height:12px;border-radius:4px;display:inline-block;border:1px solid var(--line)}
-.legend i.lg.done{background:rgba(57,255,139,.2);border-color:var(--green);box-shadow:0 0 6px rgba(57,255,139,.4)}
-.legend i.lg.failed{background:rgba(255,45,149,.2);border-color:var(--pink);box-shadow:0 0 6px rgba(255,45,149,.4)}
-.legend i.lg.now{border-color:var(--cyan);box-shadow:0 0 6px rgba(56,245,230,.5)}
-.legend i.lg.none{border-color:rgba(57,255,139,.2)}
+.legend i.lg.done{background:rgba(var(--g3),.2);border-color:var(--green);box-shadow:0 0 6px rgba(var(--g3),.4)}
+.legend i.lg.failed{background:rgba(var(--fail3),.2);border-color:var(--fail);box-shadow:0 0 6px rgba(var(--fail3),.4)}
+.legend i.lg.now{border-color:var(--cyan);box-shadow:0 0 6px rgba(var(--c3),.5)}
+.legend i.lg.none{border-color:rgba(var(--g3),.2)}
 
 /* ===== 出品モード ===== */
-.mode{border:1px solid var(--line);border-radius:var(--r2);padding:13px 14px;margin-bottom:10px;background:rgba(5,7,12,.5);transition:all .15s}
-.mode.on{border-color:var(--green);box-shadow:var(--glow-g),inset 0 0 22px rgba(57,255,139,.06)}
+.mode{border:1px solid var(--line);border-radius:var(--r2);padding:13px 14px;margin-bottom:10px;background:rgba(var(--deep3),.5);transition:all .15s}
+.mode.on{border-color:var(--green);box-shadow:var(--glow-g),inset 0 0 22px rgba(var(--g3),.06)}
 .mode-top{display:flex;align-items:center;gap:9px}
 .mode-no{font-size:20px;font-weight:800;color:var(--pink);text-shadow:var(--glow-p);line-height:1}
 .mode-name{font-weight:800;font-size:14.5px;flex:1;letter-spacing:.03em}
 .mode-ready{font-size:11.5px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);color:var(--mut)}
-.mode-ready.high{border-color:rgba(57,255,139,.45);color:var(--green)}
+.mode-ready.high{border-color:rgba(var(--g3),.45);color:var(--green)}
 .mode-ready.mid{border-color:rgba(255,210,60,.45);color:var(--amber)}
 .mode-ready.low{border-color:rgba(255,45,149,.4);color:#ff8ec4}
 
@@ -228,23 +230,23 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
 .seg{display:flex;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px;margin-bottom:15px}
 .seg button{flex:1;background:transparent;border:0;color:var(--mut);padding:9px 6px;border-radius:9px;font-size:12.5px;font-weight:700;letter-spacing:.02em}
 .seg button.on{background:linear-gradient(135deg,var(--pink),#ff5cb0);color:#fff;box-shadow:var(--glow-p)}
-.seg.sm{margin-bottom:0;background:rgba(5,7,12,.6)}
+.seg.sm{margin-bottom:0;background:rgba(var(--deep3),.6)}
 .seg.sm button{font-size:11.5px;padding:7px 4px}
-.seg.sm button.on{background:rgba(57,255,139,.16);color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}
+.seg.sm button.on{background:rgba(var(--g3),.16);color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}
 
 /* ===== 曜日×時間の表 ===== */
 .grid{overflow-x:auto;margin:4px -4px 0;padding-bottom:6px;-webkit-overflow-scrolling:touch}
 .grid table{border-collapse:separate;border-spacing:2px;margin:0 4px}
 .grid th{font-size:9.5px;font-weight:500;color:var(--mut2);padding:0;min-width:24px;height:16px;text-align:center}
 .grid th.wdh{position:sticky;left:0;background:var(--panel-solid);color:var(--green);font-weight:700;font-size:11px;min-width:20px;z-index:1}
-.grid td{width:24px;min-width:24px;height:24px;border-radius:5px;text-align:center;font-size:9.5px;font-weight:700;font-variant-numeric:tabular-nums;border:1px solid rgba(57,255,139,.07);cursor:pointer;transition:transform .08s}
+.grid td{width:24px;min-width:24px;height:24px;border-radius:5px;text-align:center;font-size:9.5px;font-weight:700;font-variant-numeric:tabular-nums;border:1px solid rgba(var(--g3),.07);cursor:pointer;transition:transform .08s}
 .grid td:hover{transform:scale(1.18);outline:1px solid var(--green);position:relative;z-index:2}
-.grid td.sel{outline:2px solid var(--cyan);box-shadow:0 0 10px rgba(56,245,230,.7);position:relative;z-index:2}
-.grid-detail{margin-top:10px;font-size:12.5px;color:var(--mut);background:rgba(5,7,12,.6);border:1px solid var(--line);border-radius:9px;padding:9px 11px;line-height:1.7}
+.grid td.sel{outline:2px solid var(--cyan);box-shadow:0 0 10px rgba(var(--c3),.7);position:relative;z-index:2}
+.grid-detail{margin-top:10px;font-size:12.5px;color:var(--mut);background:rgba(var(--deep3),.6);border:1px solid var(--line);border-radius:9px;padding:9px 11px;line-height:1.7}
 .grid-detail b{color:var(--ink)}
 
 /* ===== ランキング ===== */
-.rank{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid rgba(57,255,139,.08);font-size:13px}
+.rank{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid rgba(var(--g3),.08);font-size:13px}
 .rank:last-child{border-bottom:0}
 .rk{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:800;background:rgba(255,45,149,.15);color:var(--pink);flex:none}
 .rank:nth-child(-n+3) .rk{background:var(--pink);color:#fff;box-shadow:var(--glow-p)}
@@ -253,45 +255,45 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
 
 /* ===== ログ ===== */
 .chips{display:flex;flex-wrap:wrap;gap:6px}
-.chips button{background:rgba(5,7,12,.6);border:1px solid var(--line);color:var(--mut);border-radius:999px;padding:5px 11px;font-size:11.5px;font-weight:700}
-.chips button.on{border-color:var(--green);color:var(--green);box-shadow:0 0 8px rgba(57,255,139,.35)}
-.netbar{font-size:12px;color:var(--mut);margin-bottom:10px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:rgba(5,7,12,.6)}
+.chips button{background:rgba(var(--deep3),.6);border:1px solid var(--line);color:var(--mut);border-radius:999px;padding:5px 11px;font-size:11.5px;font-weight:700}
+.chips button.on{border-color:var(--green);color:var(--green);box-shadow:0 0 8px rgba(var(--g3),.35)}
+.netbar{font-size:12px;color:var(--mut);margin-bottom:10px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:rgba(var(--deep3),.6)}
 .netbar b{color:var(--ink)}
 .okc{color:var(--green)} .bad{color:var(--pink)}
-.newbadge{display:inline-block;margin-left:8px;font-size:10.5px;color:#042012;background:var(--green);border-radius:999px;padding:1px 8px;opacity:0;transition:opacity .25s}
+.newbadge{display:inline-block;margin-left:8px;font-size:10.5px;color:var(--on-green);background:var(--green);border-radius:999px;padding:1px 8px;opacity:0;transition:opacity .25s}
 .newbadge.show{opacity:1}
-.op{border-left:3px solid rgba(57,255,139,.35);padding:7px 9px;margin:4px 0;border-radius:0 8px 8px 0;background:rgba(5,7,12,.45);cursor:pointer}
+.op{border-left:3px solid rgba(var(--g3),.35);padding:7px 9px;margin:4px 0;border-radius:0 8px 8px 0;background:rgba(var(--deep3),.45);cursor:pointer}
 .op.warn{border-left-color:var(--amber);background:rgba(255,210,60,.05)}
 .op.error{border-left-color:var(--pink);background:rgba(255,45,149,.07)}
 .op-h{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;font-size:12px}
 .op-t{color:var(--mut2);font-variant-numeric:tabular-nums;font-size:11px;white-space:nowrap}
-.op-c{font-size:10.5px;font-weight:700;color:var(--cyan);border:1px solid rgba(56,245,230,.35);border-radius:6px;padding:0 6px}
+.op-c{font-size:10.5px;font-weight:700;color:var(--cyan);border:1px solid rgba(var(--c3),.35);border-radius:6px;padding:0 6px}
 .op-s{font-size:10.5px;font-weight:700;color:var(--pink);border:1px solid rgba(255,45,149,.4);border-radius:6px;padding:0 6px}
 .op-m{flex:1 1 220px;color:var(--ink);line-height:1.55}
 .op.error .op-m{color:#ffb3d6}
 .op-x{color:var(--mut2);font-size:10px}
 .op-d{margin-top:6px;display:flex;flex-wrap:wrap;gap:5px}
-.kv{font-size:11px;background:rgba(56,245,230,.06);border:1px solid rgba(56,245,230,.18);border-radius:6px;padding:2px 7px;color:var(--ink);word-break:break-all}
+.kv{font-size:11px;background:rgba(var(--c3),.06);border:1px solid rgba(var(--c3),.18);border-radius:6px;padding:2px 7px;color:var(--ink);word-break:break-all}
 .kv i{font-style:normal;color:var(--mut);margin-right:5px}
 
 /* ===== ログ(詳細版) ===== */
 .op-l{font-size:10px;color:var(--mut2);border:1px solid var(--mut2);border-radius:6px;padding:0 5px}
-.op.debug{border-left-color:rgba(127,166,160,.3);background:rgba(5,7,12,.3)}
+.op.debug{border-left-color:rgba(var(--mut3),.3);background:rgba(var(--deep3),.3)}
 .op.debug .op-m{color:var(--mut)}
 .op-k{font-size:10px;color:var(--mut2);font-family:ui-monospace,monospace;cursor:pointer;border-bottom:1px dotted var(--mut2)}
 .op-k:hover{color:var(--cyan);border-color:var(--cyan)}
 .op-s.acc{color:var(--amber);border-color:rgba(255,210,60,.45)}
-.trbar{margin-top:10px;font-size:12px;color:var(--mut);padding:7px 10px;border:1px solid rgba(56,245,230,.35);border-radius:9px;background:rgba(56,245,230,.06);display:flex;align-items:center;gap:8px}
+.trbar{margin-top:10px;font-size:12px;color:var(--mut);padding:7px 10px;border:1px solid rgba(var(--c3),.35);border-radius:9px;background:rgba(var(--c3),.06);display:flex;align-items:center;gap:8px}
 .trbar b{color:var(--cyan)}
 
 /* ===== リアルタイム表示(流れるログ) ===== */
 .livest{display:inline-flex;align-items:center;gap:6px;margin-left:10px;font-size:10.5px;font-weight:800;letter-spacing:.12em;padding:2px 9px;border-radius:999px;border:1px solid var(--mut2);color:var(--mut);vertical-align:middle}
 .livest i{width:7px;height:7px;border-radius:50%;background:var(--mut2);display:inline-block}
-.livest.live{color:var(--green);border-color:rgba(57,255,139,.55);box-shadow:0 0 10px rgba(57,255,139,.25)}
+.livest.live{color:var(--green);border-color:rgba(var(--g3),.55);box-shadow:0 0 10px rgba(var(--g3),.25)}
 .livest.live i{background:var(--green);box-shadow:0 0 8px var(--green);animation:livepulse 1.2s ease-in-out infinite}
 .livest.connecting,.livest.retry{color:var(--amber);border-color:rgba(255,210,60,.45)}
 .livest.connecting i,.livest.retry i{background:var(--amber);animation:livepulse .6s ease-in-out infinite}
-.livest.poll{color:var(--cyan);border-color:rgba(56,245,230,.45)}
+.livest.poll{color:var(--cyan);border-color:rgba(var(--c3),.45)}
 .livest.poll i{background:var(--cyan)}
 @keyframes livepulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.55);opacity:.45}}
 
@@ -301,7 +303,7 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
   transition:opacity .35s ease,transform .45s cubic-bezier(.2,.9,.25,1),max-height .45s cubic-bezier(.2,.9,.25,1),margin .3s,padding .3s;
   animation:opglow 1.4s ease-out .1s}
 .op.enter.in.error{animation:opglowp 1.4s ease-out .1s}
-@keyframes opglow{0%{box-shadow:0 0 0 1px rgba(57,255,139,.9),0 0 18px rgba(57,255,139,.55);background:rgba(57,255,139,.16)}100%{box-shadow:none}}
+@keyframes opglow{0%{box-shadow:0 0 0 1px rgba(var(--g3),.9),0 0 18px rgba(var(--g3),.55);background:rgba(var(--g3),.16)}100%{box-shadow:none}}
 @keyframes opglowp{0%{box-shadow:0 0 0 1px rgba(255,45,149,.95),0 0 20px rgba(255,45,149,.6);background:rgba(255,45,149,.2)}100%{box-shadow:none}}
 .netbar b.tick{display:inline-block;transition:color .3s}
 @media (prefers-reduced-motion:reduce){.op.enter{opacity:1;transform:none;max-height:none;margin:4px 0;padding:7px 9px}}
@@ -309,8 +311,8 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
 /* ===== 今すぐ自動出品 ===== */
 .fp{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
 .fp-note{font-size:12px;margin:8px 0 0}
-.fp-st{margin-top:10px;padding:9px 12px;border-radius:10px;font-size:13px;border:1px solid var(--line);background:rgba(5,7,12,.45)}
-.fp-st.ok{color:var(--green);border-color:rgba(57,255,139,.45)}
+.fp-st{margin-top:10px;padding:9px 12px;border-radius:10px;font-size:13px;border:1px solid var(--line);background:rgba(var(--deep3),.45)}
+.fp-st.ok{color:var(--green);border-color:rgba(var(--g3),.45)}
 .fp-st.ng{color:#ff8fb8;border-color:rgba(255,45,149,.5)}
 .fp-st.wait{color:var(--cyan)}
 .spin{display:inline-block;width:11px;height:11px;margin-right:8px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin 1s linear infinite;vertical-align:-1px}
@@ -319,14 +321,14 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
 /* ===== ログの見やすさ ===== */
 .presets{display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;margin-bottom:8px}
 .presets .muted{font-size:12px;margin-right:2px}
-.presets .btn.on{border-color:var(--green);color:var(--green);box-shadow:0 0 10px rgba(57,255,139,.35)}
+.presets .btn.on{border-color:var(--green);color:var(--green);box-shadow:0 0 10px rgba(var(--g3),.35)}
 .bd{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--mut);white-space:nowrap;font-variant-numeric:tabular-nums}
-.bd.ok{color:var(--green);border-color:rgba(57,255,139,.45)}
+.bd.ok{color:var(--green);border-color:rgba(var(--g3),.45)}
 .bd.ng{color:#ff8fb8;border-color:rgba(255,45,149,.55)}
-.bd.jp{color:var(--cyan);border-color:rgba(56,245,230,.45)}
+.bd.jp{color:var(--cyan);border-color:rgba(var(--c3),.45)}
 .bd.ab{color:#ffd23c;border-color:rgba(255,210,60,.45)}
 .op.sep{margin-top:12px;position:relative}
-.op.sep::before{content:"";position:absolute;left:-3px;right:0;top:-7px;border-top:1px dashed rgba(127,166,160,.25)}
+.op.sep::before{content:"";position:absolute;left:-3px;right:0;top:-7px;border-top:1px dashed rgba(var(--mut3),.25)}
 .op-t{font-variant-numeric:tabular-nums}
 
 /* ===== 原因究明の実験 ===== */
@@ -340,13 +342,111 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
 .exl{font-size:12px;color:var(--mut);margin:12px 0 5px}
 .exrow{display:flex;gap:6px;align-items:center}
 .exrow input{flex:1;min-width:0;font-family:ui-monospace,monospace;font-size:12px}
+
+
+/* ===================================================================
+   M&Aクラブ(ピンク基調)。変数をまとめて差し替えるだけで全体の色が変わる
+   ※:root で別の変数から作った値は引き継がれないので、すべて値で書く
+   =================================================================== */
+body.site-mac{
+  --bg:#0a0508; --bg2:#160a12; --panel:rgba(32,10,24,.72); --panel-solid:#200a18;
+  --line:rgba(255,110,199,.18); --line-pink:rgba(255,45,149,.25);
+  --ink:#fff0f8; --mut:#c091ad; --mut2:#6e5163;
+  --green:#ff6ec7; --green-d:#8a2a5e; --cyan:#ffa0d7;
+  --glow-g:0 0 10px rgba(255,110,199,.55),0 0 24px rgba(255,110,199,.28);
+  --g3:255,110,199; --c3:255,160,215; --panel3:32,10,24; --deep3:12,4,9; --mut3:192,145,173;
+  --green2:#ff4fb0; --on-green:#2a0418; --fail:#ff4646; --fail3:255,70,70;
+}
+body{transition:background-color .35s ease}
+
+/* ===== サイトの切り替え(画面上部) ===== */
+.sites{display:grid;grid-template-columns:1fr 1fr;gap:0;margin:14px 0 16px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:rgba(var(--deep3),.55)}
+.site-b{all:unset;box-sizing:border-box;cursor:pointer;padding:12px 16px 11px;display:flex;flex-direction:column;gap:3px;position:relative;color:var(--mut);transition:background .2s,color .2s}
+.site-b + .site-b{border-left:1px solid var(--line)}
+.site-b .site-n{font-size:17px;font-weight:800;letter-spacing:.05em;line-height:1.25}
+.site-b .site-s{font-size:12px;display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
+.site-b .site-s i{width:7px;height:7px;border-radius:50%;background:var(--mut2);flex:0 0 auto}
+.site-b .site-s.is-run i{background:#39ff8b;box-shadow:0 0 6px #39ff8b}
+.site-b.mac .site-s.is-run i{background:#ff6ec7;box-shadow:0 0 6px #ff6ec7}
+.site-b .site-s.is-bad{color:#ff8fb8}.site-b .site-s.is-bad i{background:#ff5a5a;box-shadow:0 0 6px #ff5a5a}
+.site-b::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;opacity:0;transition:opacity .2s}
+.site-b.gc::after{background:#39ff8b;box-shadow:0 0 12px #39ff8b}
+.site-b.mac::after{background:#ff6ec7;box-shadow:0 0 12px #ff6ec7}
+.site-b.on{color:var(--ink);background:rgba(var(--g3),.08)}
+.site-b.on .site-n{color:var(--green);text-shadow:var(--glow-g)}
+.site-b.on::after{opacity:1}
+.site-b:not(.on):hover{color:var(--ink);background:rgba(255,255,255,.03)}
+.site-b:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+
+/* ===== 次の出品 ===== */
+.nextcard .next-big{font-size:40px;font-weight:800;color:var(--green);text-shadow:var(--glow-g);letter-spacing:.03em;line-height:1.15;font-variant-numeric:tabular-nums;display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 16px}
+.nextcard .next-big.off{font-size:22px;color:var(--mut);text-shadow:none}
+.nextcard .next-left{font-size:17px;font-weight:700;color:var(--cyan);text-shadow:0 0 8px rgba(var(--c3),.5)}
+.nextcard .next-why{margin-top:8px;color:var(--ink);font-size:14px}
+.nextcard .next-note{font-size:12px;margin-top:4px}
+.nextcard .next-sub{margin-top:14px;font-size:13px;font-weight:700;color:var(--green)}
+.nextcard .next-list{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:4px}
+.nextcard .next-list li{display:flex;gap:12px;align-items:baseline;font-size:14px;padding:5px 10px;border:1px solid var(--line);border-radius:9px;background:rgba(var(--deep3),.4)}
+.nextcard .next-list li b{min-width:86px;font-variant-numeric:tabular-nums;color:var(--ink)}
+.nextcard .next-list li span{color:var(--mut);font-size:13px}
+.slot small{display:block;font-size:10.5px;opacity:.85;letter-spacing:0;text-shadow:none}
+
+/* ===== 下書き一覧の追加分 ===== */
+.dhint{font-size:12.5px;margin:-4px 0 10px}
+.draft .dtitle{font-size:13px;color:var(--ink);opacity:.82;margin:2px 0 0 26px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ===== 下書きエディタ(シート) ===== */
+body.ed-open{overflow:hidden}
+#sheet{position:relative;z-index:50}
+.ed-back{position:fixed;inset:0;background:rgba(0,0,0,.62);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:50}
+.ed{position:fixed;z-index:51;left:50%;top:max(3vh,env(safe-area-inset-top,0px));transform:translateX(-50%);width:min(820px,calc(100vw - 20px));max-height:calc(100dvh - 6vh);display:flex;flex-direction:column;background:var(--panel-solid);border:1px solid rgba(var(--g3),.4);border-radius:var(--r);box-shadow:0 0 0 1px rgba(var(--g3),.08),0 20px 60px rgba(0,0,0,.6),0 0 40px rgba(var(--g3),.12);animation:edIn .22s ease-out}
+@keyframes edIn{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
+.ed-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:16px 18px 12px;border-bottom:1px solid var(--line)}
+.ed-head h2{margin:2px 0 0;font-size:18px;line-height:1.35}
+.ed-site{font-size:12px;color:var(--green);font-weight:700;letter-spacing:.06em}
+.ed-body{overflow-y:auto;padding:16px 18px 6px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.ed-row{display:grid;grid-template-columns:1fr 200px;gap:12px}
+.ed-f{margin-bottom:16px;padding-left:10px;border-left:2px solid transparent;transition:border-color .2s}
+.ed-f.chg{border-left-color:var(--green)}
+.ed-f.err{border-left-color:#ff5a5a}
+.ed-f.err input,.ed-f.err textarea{border-color:#ff5a5a}
+.ed-f label{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:13px;font-weight:700;color:var(--ink);margin-bottom:6px}
+.ed-f label code{font-size:12.5px;color:var(--cyan);background:none;padding:0}
+.ed-note{font-weight:400;color:var(--mut);font-size:12px}
+.ed-count{margin-left:auto;font-weight:400;color:var(--mut);font-size:12px;font-variant-numeric:tabular-nums}
+.ed-hint{font-size:12px;color:var(--mut);margin-top:4px}
+.ed-f input,.ed-f textarea{width:100%}
+.ed-f textarea{resize:vertical;line-height:1.7;min-height:4.5em}
+.ed-f textarea.ed-long{min-height:16em}
+.ed-f input[disabled]{opacity:.55}
+.ed-price{display:flex;align-items:center;gap:8px;max-width:240px}
+.ed-price input{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}
+.ed-price span{color:var(--mut)}
+.ed-more{margin:4px 0 14px;border:1px solid var(--line);border-radius:var(--r2);background:rgba(var(--deep3),.35)}
+.ed-more summary{cursor:pointer;padding:10px 12px;font-size:13.5px;font-weight:700}
+.ed-more summary .muted{font-weight:400;font-size:12px;margin-left:6px}
+.ed-more-b{padding:6px 12px 2px}
+.ed-o{margin-bottom:12px}
+.ed-o.file .ed-on{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:12.5px;color:var(--mut);padding-left:12px}
+.ed-o.file code{color:var(--cyan);background:none;padding:0}
+.ed-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 18px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);background:rgba(var(--deep3),.5);border-radius:0 0 var(--r) var(--r)}
+.ed-msg{flex:1 1 180px;font-size:12.5px;color:var(--mut);min-height:1.2em}
+.ed-msg.bad{color:#ff8fb8;font-weight:700}
+@media (max-width:620px){
+  .ed{top:0;width:100vw;max-height:100dvh;height:100dvh;border-radius:0;border-left:0;border-right:0}
+  .ed-foot{border-radius:0}
+  .ed-row{grid-template-columns:1fr}
+  .ed-foot .btn{flex:1 1 auto}
+  .site-b{padding:10px 12px}.site-b .site-n{font-size:15px}
+}
+@media (prefers-reduced-motion:reduce){.ed{animation:none}body{transition:none}}
 </style>
 </head>
 <body>
 <div id="login" class="login-wrap">
   <div class="login-box boot">
     <div class="login-title"><span class="g">出品</span><span class="p">スケジューラー</span></div>
-    <div class="login-sub">GAMECLUB AUTO LISTING SYSTEM</div>
+    <div class="login-sub">ゲームクラブ ／ M&amp;Aクラブ 自動出品</div>
     <div class="card" style="text-align:left">
       <div class="field">
         <label>管理パスワード</label>
@@ -369,6 +469,7 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
       <button class="btn gho sm" id="logout">切断</button>
     </div>
   </div>
+  <nav class="sites" id="sites" aria-label="操作するサイト"></nav>
   <div id="banners"></div>
   <div class="tabs">
     <button data-tab="home" class="on">ホーム</button>
@@ -385,6 +486,7 @@ ol{margin:6px 0;padding-left:20px}ol li{margin-bottom:5px}
   <div id="tab-logs" class="tab hide"></div>
   <div id="tab-settings" class="tab hide"></div>
 </div>
+<div id="sheet"></div>
 <div class="toast" id="toast"></div>
 <script>// Web Audio で操作音・タイピング音を合成します(音声ファイル不要)。
 // 初回クリック後に有効化されます(ブラウザの自動再生制限のため)。
@@ -471,6 +573,18 @@ const pad = (n) => String(n).padStart(2, "0");
 const KEY = "gc_admin_key";
 let state = null, logs = null, tab = "home", pw = sessionStorage.getItem(KEY) || "";
 
+// ===== どちらのサイトを操作しているか =====
+// 選んだサイトはこの端末に覚えておく(次に開いたときも同じサイトから)
+const SITE_INFO = {
+  gc: { name: "ゲームクラブ", origin: "https://gameclub.jp", rule: "1日15回・前回から30分" },
+  mac: { name: "M&Aクラブ", origin: "https://maclub.jp", rule: "1日5回・前回から31分" },
+};
+const SITE_KEY = "gc_site";
+let site = (() => { try { const v = localStorage.getItem(SITE_KEY); return SITE_INFO[v] ? v : "gc"; } catch { return "gc"; } })();
+const SN = () => SITE_INFO[site].name;
+let overview = null;
+document.body.classList.add("site-" + site);
+
 function hm2str(m) { return \`\${Math.floor(m / 60)}:\${pad(m % 60)}\`; }
 // ===== 時刻はすべて「サーバー(インターネット)の時計」×「日本時間」で扱う =====
 // 端末の時計がずれていても影響しないよう、サーバーの現在時刻との差を記録して補正します。
@@ -488,7 +602,7 @@ function toast(msg, bad) {
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch("/api" + path, { ...opts, headers: { "Content-Type": "application/json", "x-admin-key": encodeURIComponent(pw), ...(opts.headers || {}) } });
+  const res = await fetch("/api" + path, { ...opts, headers: { "Content-Type": "application/json", "x-admin-key": encodeURIComponent(pw), "x-site": site, ...(opts.headers || {}) } });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) { sessionStorage.removeItem(KEY); location.reload(); throw new Error("auth"); }
   if (!res.ok) throw new Error(data.error || \`エラー(\${res.status})\`);
@@ -520,7 +634,8 @@ function start() {
   $("#app").classList.remove("hide");
   $$(".tabs button").forEach((b) => (b.onclick = () => switchTab(b.dataset.tab)));
   refresh();
-  setInterval(() => { if (!document.hidden) refresh(true); }, 30000);
+  loadOverview();
+  setInterval(() => { if (!document.hidden) { refresh(true); loadOverview(); } }, 30000);
   document.addEventListener("click",(e)=>{ const b=e.target.closest("button"); if(b && !b.disabled && window.Snd) Snd.click(); },true);
 }
 function switchTab(t) {
@@ -541,11 +656,12 @@ async function refresh(quiet) {
     clockOffset = state.now - Math.round((t0 + Date.now()) / 2); // 通信にかかった時間の半分を補正
     if (tab === "home") { if (!logs || !quiet) logs = (await api("/logs")).logs; }
     if ((tab === "analysis" || tab === "schedule") && !quiet) await loadAnalysis();
-    render();
+    quietRender = !!quiet; render(); quietRender = false;
   } catch (e) { if (!quiet) toast(e.message, true); }
 }
 async function loadLogs() { logs = (await api("/logs")).logs; }
 
+let quietRender = false;
 function render() {
   if (!state) return;
   const s = state.settings;
@@ -559,7 +675,7 @@ function render() {
   if (tab === "schedule") renderSchedule();
   if (tab === "analysis") renderAnalysis();
   if (tab === "logs" && !$("#ops_list")) renderLogs();
-  if (tab === "settings") renderSettings();
+  if (tab === "settings" && (!$("#tab-settings").children.length || !quietRender)) renderSettings();
 }
 
 function tickClock() {
@@ -577,15 +693,15 @@ function renderBanners() {
     b.innerHTML += \`<div class="banner \${cls}"><div><b>\${a.kind === "session" ? "ログイン状態が切れました" : "アクセスが拒否されました"}</b><br>\${esc(a.message)}<br><span class="muted">\${fmtDate(a.at)}</span></div><button class="btn gho sm x" onclick="clearAlert()">×</button></div>\`;
   }
   if (!state.session.set) {
-    b.innerHTML += \`<div class="banner info">はじめに「設定」タブで、ゲームクラブのログイン情報(PHPSESSID)を登録してください。</div>\`;
+    b.innerHTML += \`<div class="banner info">はじめに「設定」タブで、\${SN()}のログイン情報(PHPSESSID)を登録してください。</div>\`;
   }
   const t = state.lastTick;
   if (t && nowMs() - t > 20 * 60000 && !state.settings.paused) {
-    b.innerHTML += \`<div class="banner warn">自動実行が\${ago(t)}から動いていないようです。日本のサーバー(外部起動)とCloudflareの Workers → gc-scheduler → Logs を確認してください。</div>\`;
+    b.innerHTML += \`<div class="banner warn">自動実行が\${ago(t)}から動いていないようです。日本のサーバー(外部起動)とCloudflareの Workers → gc-scheduler → Logs を確認してください(\${SN()})。</div>\`;
   }
   const x = state.ext;
   if (x && nowMs() - x.at > 5 * 60000 && !state.settings.paused) {
-    b.innerHTML += \`<div class="banner warn"><div><b>日本からの外部起動が止まっています</b>(最後: \${fmtDate(x.at)})。日本のサーバーが動いているか確認してください。止まっている間はCloudflareの自動実行に戻りますが、ゲームクラブに止められる可能性が高いです。</div></div>\`;
+    b.innerHTML += \`<div class="banner warn"><div><b>日本からの外部起動が止まっています</b>(最後: \${fmtDate(x.at)})。日本のサーバーが動いているか確認してください。止まっている間はCloudflareの自動実行に戻りますが、\${SN()}に止められる可能性が高いです。</div></div>\`;
   } else if (x && x.country !== "JP") {
     b.innerHTML += \`<div class="banner warn"><div><b>外部起動の国が日本ではありません</b>(国 \${esc(x.country)})。起動元のサーバーが日本のリージョンにあるか確認してください。</div></div>\`;
   }
@@ -593,27 +709,78 @@ function renderBanners() {
 window.clearAlert = async () => { await api("/alert/clear", { method: "POST" }); refresh(); };
 
 // ---- ホーム ----
+// 「次の出品」までの残り時間を1秒ごとに更新
+function fmtLeft(ms) {
+  if (ms <= 0) return "まもなく(1分以内)";
+  const t = Math.floor(ms / 1000), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+  return h ? \`あと \${h}時間\${pad(m)}分\${pad(sec)}秒\` : \`あと \${m}分\${pad(sec)}秒\`;
+}
+function tickNext() {
+  const el = document.getElementById("nextLeft"); if (!el || !state || !state.plan || !state.plan.items.length) return;
+  const left = state.plan.items[0].at - nowMs();
+  el.textContent = fmtLeft(left);
+  // 予定時刻を過ぎて1分半たったら、最新の状態を読み直す(出品されたかを反映)
+  if (left < -90000 && !tickNext.busy) { tickNext.busy = true; refresh(true).finally(() => { tickNext.busy = false; }); }
+}
+setInterval(tickNext, 1000);
+// 日付つきの時刻表示(今日なら時刻だけ、明日なら「明日」)
+function dayTime(ms) {
+  const d = J(ms), n = J(nowMs()), tm = J(nowMs() + 86400e3);
+  const t = \`\${d.h}:\${pad(d.mi)}\`;
+  if (d.y === n.y && d.mo === n.mo && d.d === n.d) return t;
+  if (d.y === tm.y && d.mo === tm.mo && d.d === tm.d) return \`明日 \${t}\`;
+  return \`\${d.mo}/\${d.d} \${t}\`;
+}
+
 function renderHome() {
-  const s = state.settings, now = state.now;
+  const s = state.settings;
   const curMin = J(nowMs()).h * 60 + J(nowMs()).mi;
+  const plan = state.plan || { items: [], today: {} };
+  const nextItem = plan.items[0];
   const slotHtml = state.slots.map((m) => {
     const st = state.today.slots[m];
+    const pl = plan.today[m];
     const cls = st?.status === "done" ? "done" : (st?.status === "failed" || st?.status === "skipped") ? "failed" : "";
-    const isNext = !st && m > curMin && state.slots.filter((x) => !state.today.slots[x] && x > curMin)[0] === m;
+    const isNext = !!(nextItem && pl && pl.at === nextItem.at && pl.kind === "plan");
     const mark = st?.status === "done" ? "✓ " : (st?.status === "failed" || st?.status === "skipped") ? "✕ " : "";
+    let sub = "";
+    if (st?.status === "done" && st.at) {
+      const a = J(st.at), am = a.h * 60 + a.mi;
+      sub = Math.abs(am - m) >= 2 ? \`<small>→ \${a.h}:\${pad(a.mi)}に出品</small>\` : "";
+    } else if (!st || st.status === "retry") {
+      const late = m <= curMin;
+      if (pl && pl.kind === "plan") {
+        const a = J(pl.at), am = a.h * 60 + a.mi;
+        sub = late || Math.abs(am - m) >= 2 ? \`<small>\${late ? "遅れ・" : ""}→ \${dayTime(pl.at)}に出品予定</small>\` : "";
+      } else if (pl && pl.kind === "limit") sub = \`<small>今日の上限のため出品なし</small>\`;
+      else if (late && !s.paused) sub = \`<small>遅れ・今日中には出品されません</small>\`;
+    }
     const tip = st?.message ? esc(st.message) : (st?.status === "done" ? "出品済み" : "");
-    return \`<span class="slot \${cls} \${isNext ? "now" : ""}" title="\${tip}">\${mark}\${hm2str(m)}</span>\`;
+    return \`<span class="slot \${cls} \${isNext ? "now" : ""}" title="\${tip}">\${mark}\${hm2str(m)}\${sub}</span>\`;
   }).join("");
-  const legend = \`<div class="legend"><span><i class="lg done"></i>出品済み</span><span><i class="lg failed"></i>出品されなかった</span><span><i class="lg now"></i>次の予定</span><span><i class="lg none"></i>これから</span></div>\`;
+  const nextCard = (() => {
+    if (plan.blocked) return \`<div class="card nextcard"><h2>次の出品</h2><div class="next-big off">出品しません</div><div class="next-why">\${esc(plan.message || "")}</div></div>\`;
+    if (!nextItem) return \`<div class="card nextcard"><h2>次の出品</h2><div class="next-big off">3日以内の予定なし</div></div>\`;
+    const rest = plan.items.slice(1).map((it) => \`<li><b>\${dayTime(it.at)}</b><span>\${esc(it.late ? \`\${hm2str(it.slot)}枠の取り戻し\` : \`\${hm2str(it.slot)}枠\`)}\${it.draft ? \` ・ \${esc(it.draft)}\` : ""}</span></li>\`).join("");
+    return \`<div class="card nextcard">
+      <h2>次の出品</h2>
+      <div class="next-big">\${dayTime(nextItem.at)}<span class="next-left" id="nextLeft">\${fmtLeft(nextItem.at - nowMs())}</span></div>
+      <div class="next-why">\${esc(nextItem.reason)}\${nextItem.draft ? \`<br>出す下書き: \${esc(nextItem.draft)}\` : ""}</div>
+      <div class="muted next-note">自動実行は1分おきなので、実際の出品はこの時刻から1分以内になります。</div>
+      \${rest ? \`<div class="next-sub">このあとの出品予定</div><ul class="next-list">\${rest}</ul>\` : ""}
+    </div>\`;
+  })();
+  const legend = \`<div class="legend"><span><i class="lg done"></i>出品済み</span><span><i class="lg failed"></i>出品されなかった</span><span><i class="lg now"></i>次に出品する枠</span><span><i class="lg none"></i>これから</span></div>\`;
   const nextDraft = state.drafts.find((d) => d.key === state.nextDraftKey);
   const recent = (logs || []).slice(0, 6);
   $("#tab-home").innerHTML = \`
+    \${nextCard}
     <div class="card">
-      <h2>稼働状態</h2>
+      <h2>稼働状態 <span class="q">\${esc(SN())} ・ \${esc(SITE_INFO[site].rule)}</span></h2>
       <label class="switch" style="margin-bottom:14px">
         <input type="checkbox" id="pauseToggle" \${!s.paused ? "checked" : ""}>
         <span class="track"></span>
-        <span>\${s.paused ? "停止中 — 自動出品はされません" : "稼働中 — 予定時刻に自動出品します"}</span>
+        <span>\${s.paused ? \`停止中 — \${esc(SN())}には自動出品しません\` : \`稼働中 — 予定時刻に\${esc(SN())}へ自動出品します\`}</span>
       </label>
       <dl class="dl">
         <dt>出品モード</dt><dd>自分の売れ行きで最適化</dd>
@@ -624,13 +791,13 @@ function renderHome() {
       </dl>
       <div class="fp">
         <button class="btn p" id="fpBtn" \${state.force && state.force.pending ? "disabled" : ""}>今すぐ自動出品</button>
-        <div class="muted fp-note">次の自動実行(1分以内)で、本番と同じ経路で1回出品します。予定の枠とは別の1回です(1日の上限には数えます)。</div>
+        <div class="muted fp-note">次の自動実行(1分以内)で、本番と同じ経路で\${esc(SN())}に1回出品します。予定の枠とは別の1回です(1日の上限には数えます)。</div>
         <div id="fpMsg">\${forceHtml()}</div>
       </div>
     </div>
     <div class="card">
       <h2>今日の予定 <span class="q">\${state.slots.length}枠</span></h2>
-      <div class="slots">\${slotHtml || "<span class='muted'>時間設定タブで予定を作成してください。</span>"}</div>
+      <div class="slots">\${slotHtml || "<span class='muted'>時間タブで予定を作成してください。</span>"}</div>
       \${state.slots.length ? legend : ""}
     </div>
 
@@ -649,10 +816,9 @@ function renderHome() {
   };
   if (state.force && state.force.pending) watchForce(state.force.pending.at);
   $("#pauseToggle").onchange = async (e) => {
-    try { await api("/settings", { method: "POST", body: JSON.stringify({ paused: !e.target.checked }) }); window.Snd&&(e.target.checked?Snd.toggleOn():Snd.toggleOff()); toast(e.target.checked ? "稼働を開始しました" : "停止しました"); refresh(); }
+    try { await api("/settings", { method: "POST", body: JSON.stringify({ paused: !e.target.checked }) }); window.Snd&&(e.target.checked?Snd.toggleOn():Snd.toggleOff()); toast(e.target.checked ? \`\${SN()}の稼働を開始しました\` : \`\${SN()}を停止しました\`); refresh(); loadOverview(); }
     catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
   };
-
 }
 
 // 「今すぐ自動出品」の状態表示
@@ -699,8 +865,11 @@ function renderDrafts() {
         <span class="nm">\${esc(d.label)}</span>
         \${d.enabled ? "" : '<span class="pill off">無効</span>'}
       </div>
-      <div class="meta">下書き #\${d.draftId}\${d.price ? \` ・ \${Number(d.price).toLocaleString()}円\` : ""} ・ 出品\${d.publishedCount}回\${d.lastPublishedAt ? \` ・ 最終 \${fmtDate(d.lastPublishedAt)}\` : ""}\${d.key === state.nextDraftKey ? " ・ <b style='color:var(--green)'>次はこれ</b>" : ""}</div>
+      \${d.title && d.title !== d.label ? \`<div class="dtitle">\${esc(d.title)}</div>\` : ""}
+      <div class="meta">下書き #\${d.draftId}\${d.price ? \` ・ \${Number(d.price).toLocaleString()}円\` : ""} ・ 出品\${d.publishedCount}回\${d.lastPublishedAt ? \` ・ 最終 \${fmtDate(d.lastPublishedAt)}\` : ""}\${d.updatedAt ? \` ・ 編集 \${fmtDate(d.updatedAt)}\` : ""}\${d.key === state.nextDraftKey ? " ・ <b style='color:var(--green)'>次はこれ</b>" : ""}</div>
       <div class="acts">
+        <button class="btn sm p" data-act="edit">編集</button>
+        <button class="btn sm" data-act="copy">複製</button>
         <button class="btn sm" data-act="toggle">\${d.enabled ? "無効化" : "有効化"}</button>
         <button class="btn sm" data-act="first">次に出す</button>
         <button class="btn sm gho" data-act="del">削除</button>
@@ -710,10 +879,10 @@ function renderDrafts() {
   $("#tab-drafts").innerHTML = \`
     <div class="card">
       <h2>下書き一覧 <span class="q">上から順に出品されます</span></h2>
-      \${state.drafts.length ? \`<div id="draftList">\${list}</div>\` : "<div class='center'>まだ下書きが登録されていません。<br>下に貼り付けて追加してください。</div>"}
+      \${state.drafts.length ? \`<div class="muted dhint">文章や価格を変えるときは「編集」、似た商品を増やすときは「複製」を押してください。</div><div id="draftList">\${list}</div>\` : \`<div class='center'>まだ\${esc(SN())}の下書きが登録されていません。<br>下の「Payloadを貼り付けて追加」から1つ登録すると、あとは画面で編集・複製できます。</div>\`}
     </div>
     <div class="card">
-      <h2>下書きを追加</h2>
+      <h2>Payloadを貼り付けて追加 <span class="q">新しい画像を使うとき</span></h2>
       \${addFormHtml()}
     </div>\`;
   bindAddForm();
@@ -730,7 +899,7 @@ function addFormHtml() {
     <button class="btn p" id="d_add">追加する</button>
     <details class="help"><summary>データの取り方</summary><div>
       <ol>
-        <li>ゲームクラブで対象の下書きを一度出品する(開発者ツールのNetworkを記録しながら)</li>
+        <li>\${SN()}で対象の下書きを一度出品する(開発者ツールのNetworkを記録しながら)</li>
         <li>名前が <code>add?draft=番号</code> の通信をクリック</li>
         <li>「Payload」タブ → 上の「View source」ボタンを押す</li>
         <li>表示された内容を全部コピーして、上の欄に貼り付け</li>
@@ -757,6 +926,7 @@ function bindDraftActs() {
       const d = state.drafts.find((x) => x.key === key);
       const act = btn.dataset.act;
       try {
+        if (act === "edit" || act === "copy") return openEditor(key, act);
         if (act === "toggle") await api("/drafts/" + key, { method: "PATCH", body: JSON.stringify({ enabled: !d.enabled }) });
         else if (act === "first") { await api(\`/drafts/\${key}/next\`, { method: "POST", body: "{}" }); toast("次に出品します"); }
         else if (act === "del") { if (!confirm(\`「\${d.label}」を削除しますか?\`)) return; await api("/drafts/" + key, { method: "DELETE" }); }
@@ -804,7 +974,7 @@ function renderSchedule() {
       <h2>出品モード</h2>
       <div class="mode on">
         <div class="mode-top"><span class="mode-name">自分の売れ行きで最適化</span><span class="pill ok">使用中</span></div>
-        <div class="muted" style="margin:6px 0 8px">このツールが出品した商品の売れ行きを記録し、売れやすい時間帯に寄せます。データが少ないうちは24時間に均等に出品します(約96分おき)。最適化後も一部の枠は未知の時間帯に回し続け、見落としを防ぎます。他の人の出品は確認しません。</div>
+        <div class="muted" style="margin:6px 0 8px">このツールが出品した商品の売れ行きを記録し、売れやすい時間帯に寄せます。データが少ないうちは24時間に均等に出品します(\${site === "mac" ? "約4時間48分おき" : "約96分おき"})。最適化後も一部の枠は未知の時間帯に回し続け、見落としを防ぎます。他の人の出品は確認しません。</div>
         <div class="mode-ready \${r.level}">データ: \${lv[r.level]} ・ \${esc(r.note)}</div>
       </div>
     </div>
@@ -826,7 +996,8 @@ let anMetric = { own: "rate" };
 
 // 168マス(曜日×時間)の表。values[i] は数値 or null(データなし)。color[i] は 0〜1 の濃さ
 function grid(values, color, { fmt = (v) => v, hue = "pink", id = "g" } = {}) {
-  const rgb = hue === "green" ? "57,255,139" : hue === "cyan" ? "56,245,230" : "255,45,149";
+  const css = getComputedStyle(document.body), cv = (n) => css.getPropertyValue(n).trim();
+  const rgb = hue === "green" ? cv("--g3") : hue === "cyan" ? cv("--c3") : "255,45,149";
   let h = \`<div class="grid"><table><thead><tr><th class="wdh"></th>\`;
   for (let hr = 0; hr < 24; hr++) h += \`<th>\${hr}</th>\`;
   h += \`</tr></thead><tbody>\`;
@@ -838,7 +1009,7 @@ function grid(values, color, { fmt = (v) => v, hue = "pink", id = "g" } = {}) {
       const a = has ? 0.1 + 0.85 * Math.max(0, Math.min(1, color[i] || 0)) : 0;
       const txt = has ? fmt(v) : "";
       const dark = a > 0.55;
-      h += \`<td data-g="\${id}" data-i="\${i}" style="background:\${has ? \`rgba(\${rgb},\${a.toFixed(2)})\` : "transparent"};color:\${dark ? "#05060a" : "var(--ink)"}">\${txt}</td>\`;
+      h += \`<td data-g="\${id}" data-i="\${i}" style="background:\${has ? \`rgba(\${rgb},\${a.toFixed(2)})\` : "transparent"};color:\${dark ? "var(--bg)" : "var(--ink)"}">\${txt}</td>\`;
     }
     h += \`</tr>\`;
   }
@@ -854,7 +1025,7 @@ function renderAnalysis() {
     <div id="an-body"></div>
     <div class="card">
       <h2>今すぐ確認</h2>
-      <div class="muted" style="margin-bottom:10px">通常は自動(自分の売れ行き10分おき)です。すぐ最新にしたいときに押してください。ゲームクラブに負担をかけないよう、数十秒かかります。</div>
+      <div class="muted" style="margin-bottom:10px">通常は自動(自分の売れ行き10分おき)です。すぐ最新にしたいときに押してください。\${SN()}に負担をかけないよう、数十秒かかります。</div>
       <button class="btn" id="an_scan">今すぐ確認する</button>
       <div class="muted" id="an_scanMsg" style="margin-top:8px"></div>
     </div>\`;
@@ -980,7 +1151,7 @@ function connectWS() {
   if (!("WebSocket" in window)) return startPolling();
   clearTimeout(wsTimer);
   setLiveState(wsRetry ? "retry" : "connecting");
-  try { ws = new WebSocket(\`\${location.protocol === "https:" ? "wss" : "ws"}://\${location.host}/api/stream?k=\${encodeURIComponent(pw)}\`); }
+  try { ws = new WebSocket(\`\${location.protocol === "https:" ? "wss" : "ws"}://\${location.host}/api/stream?k=\${encodeURIComponent(pw)}&s=\${site}\`); }
   catch { return startPolling(); }
   ws.onopen = () => {
     wsRetry = 0; setLiveState("live"); stopPolling();
@@ -1026,7 +1197,7 @@ function renderLogs() {
           <span class="muted">よく使う:</span>
           <button class="btn sm" data-p="pub">出品の結果</button>
           <button class="btn sm" data-p="err">エラーだけ</button>
-          <button class="btn sm" data-p="net">ゲームクラブへの通信</button>
+          <button class="btn sm" data-p="net">\${SN()}への通信</button>
           <button class="btn sm gho" data-p="reset">元に戻す</button>
         </div>
         <div class="row" style="margin-top:10px;align-items:center;gap:8px">
@@ -1066,7 +1237,7 @@ function renderLogs() {
     const rows = filteredOps();
     const blob = new Blob([JSON.stringify(rows, null, 1)], { type: "application/json" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-    const d = J(nowMs()); a.download = \`gc-log-\${d.y}\${pad(d.mo)}\${pad(d.d)}-\${pad(d.h)}\${pad(d.mi)}.json\`; a.click();
+    const d = J(nowMs()); a.download = \`\${site}-log-\${d.y}\${pad(d.mo)}\${pad(d.d)}-\${pad(d.h)}\${pad(d.mi)}.json\`; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 3000); toast(\`\${rows.length}件を保存しました\`);
   };
   $("#ops_more").onclick = async (e) => {
@@ -1106,7 +1277,7 @@ function filteredOps() { return opsBuf.filter(passOps); }
 function drawNet() {
   const el = $("#ops_net"); if (!el || !opsNet) return;
   const pause = opsNet.pauseUntil ? \`<span class="bad">休止中(\${fmtTime(opsNet.pauseUntil)}まで)</span>\` : \`<span class="okc">通常稼働</span>\`;
-  el.innerHTML = \`ゲームクラブへの通信: 今日 <b class="tick">\${opsNet.today}</b> / \${opsNet.cap} 回 ・ \${pause}\`;
+  el.innerHTML = \`\${SN()}への通信: 今日 <b class="tick">\${opsNet.today}</b> / \${opsNet.cap} 回 ・ \${pause}\`;
 }
 function drawCount() { const c = $("#ops_count"); if (c) { const n = filteredOps().length; c.textContent = n ? \`\${n}件(読み込み済み \${opsBuf.length}件)\` : ""; } }
 function drawHeld() { const b = $("#ops_held"); if (!b) return; b.classList.toggle("hide", !held.length); b.textContent = \`新着 \${held.length}件 ― 押して表示\`; }
@@ -1118,7 +1289,7 @@ function opBadges(o) {
     const ok = x.status >= 200 && x.status < 400 && !x.cfMitigated;
     h += \`<span class="bd \${ok ? "ok" : "ng"}">\${ok ? "✓" : "✕"}\${x.status}\${x.cfMitigated ? " 確認画面" : ""}</span>\`;
   }
-  // 出どころは「ゲームクラブ側で記録された拠点」(cf-rayの末尾)を優先する
+  // 出どころは「サイト側で記録された拠点」(cf-rayの末尾)を優先する
   const c = (x.cfRay ? String(x.cfRay).split("-").pop() : "") || x.colo || "";
   if (c) { const jp = ["NRT", "KIX", "FUK", "OKA"].includes(c); h += \`<span class="bd \${jp ? "jp" : "ab"}">\${esc(COLO_NAME[c] || c)}</span>\`; }
   if (x.ms != null && x.status != null) h += \`<span class="bd">\${x.ms >= 1000 ? (x.ms / 1000).toFixed(1) + "秒" : x.ms + "ms"}</span>\`;
@@ -1161,8 +1332,9 @@ const OPS_KEY = { path: "アクセス先", method: "方式", status: "応答コ�
 function renderSettings() {
   const s = state.settings;
   $("#tab-settings").innerHTML = \`
+    \${migrateCardHtml()}
     <div class="card">
-      <h2>ログイン情報(PHPSESSID)</h2>
+      <h2>\${esc(SN())}のログイン情報(PHPSESSID)</h2>
       <div class="muted" style="margin-bottom:10px">現在: \${state.session.set ? \`<span class="pill ok">登録済み</span> \${state.session.updatedAt ? "(" + fmtDate(state.session.updatedAt) + ")" : ""}\` : '<span class="pill off">未登録</span>'}</div>
       <div class="field"><label>PHPSESSIDの値</label><input type="password" id="st_sess" placeholder="値の部分だけを貼り付け"></div>
       <div class="row">
@@ -1173,8 +1345,8 @@ function renderSettings() {
       <div class="muted" id="st_testMsg" style="margin-top:10px"></div>
       <details class="help"><summary>値の取り方</summary><div>
         <ol>
-          <li>ゲームクラブを開き、開発者ツール(F12)の「Application」タブへ</li>
-          <li>左の Cookies → https://gameclub.jp を選ぶ</li>
+          <li>\${SN()}を開き、開発者ツール(F12)の「Application」タブへ</li>
+          <li>左の Cookies → \${SITE_INFO[site].origin} を選ぶ</li>
           <li><code>PHPSESSID</code> の行の Value をコピーして貼り付け</li>
         </ol>
         ブラウザでログアウトすると無効になります。普段どおり放置すれば長期間有効です。
@@ -1182,7 +1354,7 @@ function renderSettings() {
     </div>
     <div class="card">
       <h2>日本からの外部起動</h2>
-      <div class="muted" style="margin-bottom:10px">Cloudflareの自動実行は、ゲームクラブから「アメリカからの通信」と見られて止められます。そこで、<b>日本のサーバーが1分おきに下のURLを開く</b>ことでツールを動かします(その通信は「日本」と見られるので通れます)。URLには合言葉が入っているので、他人に見せないでください。</div>
+      <div class="muted" style="margin-bottom:10px">Cloudflareの自動実行は、\${SN()}から「アメリカからの通信」と見られて止められます。そこで、<b>日本のサーバーが1分おきに下のURLを開く</b>ことでツールを動かします(その通信は「日本」と見られるので通れます)。URLには合言葉が入っているので、他人に見せないでください。</div>
       <div id="ex_box" class="muted">読み込み中…</div>
     </div>
     <div class="card">
@@ -1196,7 +1368,7 @@ function renderSettings() {
     </div>
     <div class="card">
       <h2>通信の出どころテスト</h2>
-      <div class="muted" style="margin-bottom:10px">ゲームクラブは日本以外からのアクセスを確認画面で止めるため、ツールは「保存領域」(場所が固定されている部分)から通信します。このボタンで、保存領域がどこの拠点にあるかと、そこからゲームクラブに通れるか(ログインなしのトップページを各1回だけ読みます)を確かめ、日本から通れるものを自動で選びます。<b>新しくした直後に一度押してください。</b></div>
+      <div class="muted" style="margin-bottom:10px">\${SN()}は日本以外からのアクセスを確認画面で止めるため、ツールは「保存領域」(場所が固定されている部分)から通信します。このボタンで、保存領域がどこの拠点にあるかと、そこから\${SN()}に通れるか(ログインなしのトップページを各1回だけ読みます)を確かめ、日本から通れるものを自動で選びます。<b>新しくした直後に一度押してください。</b></div>
       <button class="btn" id="st_origin">通信の出どころテスト</button>
       <div id="st_originMsg" style="margin-top:12px"></div>
     </div>
@@ -1223,6 +1395,7 @@ function renderSettings() {
     $("#ex_regen").onclick = async () => { if (!confirm("合言葉を作り直します。今のURL・コマンドは使えなくなります。よろしいですか?")) return; try { drawExt(await api("/ext/regen", { method: "POST", body: "{}" })); toast("作り直しました。サーバーのコマンドも貼り直してください"); } catch (e) { toast(e.message, true); } };
   };
   api("/ext").then(drawExt).catch((e) => { $("#ex_box").textContent = e.message; });
+  bindMigrate();
 
   // ---- 原因究明の実験 ----
   const dgCell = (x) => !x ? "—" : x.skipped ? '<span class="muted">未実施(ログイン情報なし)</span>' : x.error ? \`<span class="bad">通信エラー</span>\` : x.challenge ? \`<span class="bad">✕ 確認画面(\${x.status})</span>\` : x.status === 200 ? \`<span class="okc">✓ \${x.status}</span>\` : \`<span class="bad">\${x.status}</span>\`;
@@ -1235,7 +1408,7 @@ function renderSettings() {
       const okU = !u.top.challenge && !u.mypage.challenge && !u.top.error, okA = !a.top.challenge && !a.mypage.challenge && !a.top.error;
       const diffSeen = u.seen.loc !== a.seen.loc || u.seen.ipKind !== a.seen.ipKind;
       verdict = okU && !okA ? \`<div class="banner warn" style="margin:10px 0 0"><div><b>確定: きっかけだけで結果が変わります。</b>同じ場所・同じ中身の通信でも、自動実行だけ止められました。\${diffSeen ? \`相手から見た姿も違います(画面の操作=国 \${esc(u.seen.loc)}・\${esc(u.seen.ipKind)} / 自動実行=国 \${esc(a.seen.loc)}・\${esc(a.seen.ipKind)})。<b>止められている理由は、この「見え方の違い」</b>だと考えられます。\` : "相手から見た国・アドレスは同じなので、別の手がかりで判定されています。"}</div></div>\`
-        : okU && okA ? '<div class="banner info" style="margin:10px 0 0"><div><b>どちらも通れました。</b>今はゲームクラブ側の判定が緩んでいる可能性があります。「今すぐ自動出品」も試してください。</div></div>'
+        : okU && okA ? \`<div class="banner info" style="margin:10px 0 0"><div><b>どちらも通れました。</b>今は\${SN()}側の判定が緩んでいる可能性があります。「今すぐ自動出品」も試してください。</div></div>\`
         : !okU && !okA ? '<div class="banner warn" style="margin:10px 0 0"><div><b>どちらも止められました。</b>きっかけに関係なく止められています(判定がさらに厳しくなった可能性)。</div></div>'
         : '<div class="banner warn" style="margin:10px 0 0"><div><b>画面の操作だけ止められ、自動実行は通れました。</b>想定外の結果です。このまま教えてください。</div></div>';
     }
@@ -1245,7 +1418,7 @@ function renderSettings() {
       \${row("相手から見たアドレス", (r) => esc(r.seen.ipKind))}
       \${row("トップページ", (r) => dgCell(r.top))}
       \${row("マイページ", (r) => dgCell(r.mypage))}
-      \${row("ゲームクラブ側の拠点", (r) => esc(COLO_NAME[r.top.colo] || r.top.colo || "?"))}
+      \${row(\`\${SN()}側の拠点\`, (r) => esc(COLO_NAME[r.top.colo] || r.top.colo || "?"))}
     </table></div>\${verdict}\`;
   };
   let dgTimer = null;
@@ -1286,7 +1459,258 @@ function renderSettings() {
   $("#st_test").onclick = async (e) => { e.target.disabled = true; $("#st_testMsg").textContent = "確認中…"; try { const r = await api("/test", { method: "POST", body: "{}" }); window.Snd&&(r.ok?Snd.success():Snd.fail()); $("#st_testMsg").innerHTML = \`<span style="color:var(--\${r.ok ? "ok" : "bad"})">\${r.ok ? "✓ " : "✕ "}\${esc(r.message)}</span>\`; } catch (err) { $("#st_testMsg").textContent = err.message; } e.target.disabled = false; };
 }
 
-if (pw) { fetch("/api/state", { headers: { "x-admin-key": encodeURIComponent(pw) } }).then((r) => { if (r.ok) start(); else { sessionStorage.removeItem(KEY); } }); }
+
+// ===================================================================
+// ---- サイトの切り替え(画面上部) ----
+// ===================================================================
+async function loadOverview() {
+  try { overview = (await api("/overview")).sites; } catch { overview = overview || null; }
+  renderSites();
+}
+function siteStatus(o) {
+  if (!o) return { cls: "", text: "読み込み中…" };
+  if (o.error) return { cls: "is-bad", text: "読み込めません" };
+  if (o.alert) return { cls: "is-bad", text: o.alert === "session" ? "ログイン切れ" : "拒否された" };
+  if (o.pauseUntil && o.pauseUntil > nowMs()) return { cls: "is-bad", text: \`休止中 \${fmtTime(o.pauseUntil)}まで\` };
+  if (o.paused) return { cls: "is-off", text: \`停止中 ・ 今日 \${o.today}/\${o.limit}\` };
+  if (!o.session) return { cls: "is-bad", text: "ログイン情報なし" };
+  return { cls: "is-run", text: \`稼働中 ・ 今日 \${o.today}/\${o.limit}\` };
+}
+function renderSites() {
+  const box = $("#sites"); if (!box) return;
+  box.innerHTML = Object.entries(SITE_INFO).map(([id, info]) => {
+    const st = siteStatus(overview && overview[id]);
+    return \`<button class="site-b \${id}\${id === site ? " on" : ""}" data-site="\${id}" aria-pressed="\${id === site}">
+      <span class="site-n">\${esc(info.name)}</span>
+      <span class="site-s \${st.cls}"><i></i>\${esc(st.text)}</span>
+    </button>\`;
+  }).join("");
+  $$("#sites [data-site]").forEach((b) => (b.onclick = () => switchSite(b.dataset.site)));
+}
+function switchSite(id) {
+  if (id === site || !SITE_INFO[id]) return;
+  if (editor && editor.dirty() && !confirm("編集中の下書きが保存されていません。破棄してサイトを切り替えますか?")) return;
+  closeEditor(true);
+  stopOps();
+  clearInterval(forceWatch); forceWatch = null;
+  document.body.classList.remove("site-" + site);
+  site = id;
+  try { localStorage.setItem(SITE_KEY, id); } catch {}
+  document.body.classList.add("site-" + site);
+  // サイトごとのデータは全部読み直す
+  state = null; logs = null; analysisData = null;
+  opsBuf = []; opsIds = new Set(); opsNewest = ""; opsNet = null; opsOpen = new Set(); opsTrace = ""; held = [];
+  $$(".tab").forEach((el) => (el.innerHTML = ""));
+  renderSites();
+  window.Snd && Snd.tabSwitch();
+  refresh().then(() => { if (tab === "logs") renderLogs(); });
+}
+
+// ===================================================================
+// ---- 下書きエディタ(画面で直接入力して編集・複製) ----
+// 一覧とは別の「シート」に表示するので、30秒ごとの自動更新で入力中の文字が消えることはありません。
+// ===================================================================
+const MAIN_FIELDS = [
+  { name: "name", label: "商品名", kind: "line", hint: "一覧に表示されるタイトルです。" },
+  { name: "detail", label: "説明文", kind: "long", hint: "改行もそのまま反映されます。" },
+  { name: "price", label: "価格", kind: "price", hint: "半角数字で。全角やカンマは保存時に直します。" },
+  { name: "notice_information", label: "注意事項", kind: "mid", hint: "" },
+];
+// その他の項目の、わかっている範囲での説明(わからない項目は名前だけ出す)
+const FIELD_NOTE = {
+  "item_images[0]": "画像(サイトの下書きに保存済みの画像の番号)",
+  subcategory_item_id: "カテゴリの番号",
+  account_type_id: "アカウントの種類の番号",
+  product_type_id: "商品の種類の番号",
+  _method: "送信方式(内部用)",
+  is_draft: "内部用", is_edit: "内部用", draft_id: "内部用",
+  limit_day: "出品期限の日付(出品のたびに約100年後へ自動で書き換えます)",
+  limit_time: "出品期限の時刻(出品のたびに自動で書き換えます)",
+};
+const AUTO_FIELDS = new Set(["limit_day", "limit_time"]);
+let editor = null;
+
+async function openEditor(key, mode) {
+  let d;
+  try { d = (await api("/drafts/" + key)).draft; } catch (e) { return toast(e.message, true); }
+  const copy = mode === "copy";
+  const fields = d.fields.map((f) => ({ ...f }));
+  const init = JSON.stringify({ label: copy ? "" : d.label, draftId: d.draftId, f: fields.map((f) => f.value) });
+  editor = { key, copy, base: d, fields, init, dirty: () => !!$("#sheet .ed") && JSON.stringify(readEditor()) !== init };
+  renderEditor();
+}
+
+function readEditor() {
+  const ed = editor;
+  const vals = ed.fields.map((f, i) => { const el = document.getElementById("ef_" + i); return el ? el.value : f.value; });
+  return { label: $("#ed_label").value, draftId: $("#ed_id").value.trim(), f: vals };
+}
+
+function fieldInput(f, i, meta) {
+  const v = esc(f.value);
+  const kind = meta ? meta.kind : AUTO_FIELDS.has(f.name) ? "auto" : f.value.length > 60 || f.value.includes("\\n") ? "mid" : "line";
+  if (kind === "auto") return \`<input type="text" id="ef_\${i}" value="\${v}" disabled>\`;
+  if (kind === "price") return \`<div class="ed-price"><input type="text" id="ef_\${i}" value="\${v}" inputmode="numeric" autocomplete="off"><span>円</span></div>\`;
+  if (kind === "line") return \`<input type="text" id="ef_\${i}" value="\${v}" autocomplete="off">\`;
+  const rows = kind === "long" ? 12 : 4;
+  return \`<textarea id="ef_\${i}" rows="\${rows}" class="\${kind === "long" ? "ed-long" : ""}">\${v}</textarea>\`;
+}
+
+function renderEditor() {
+  const ed = editor, d = ed.base;
+  const used = new Set();
+  const main = MAIN_FIELDS.map((m) => {
+    const i = ed.fields.findIndex((f, k) => f.name === m.name && !f.file && !used.has(k));
+    if (i < 0) return "";
+    used.add(i);
+    return \`<div class="ed-f" data-i="\${i}">
+      <label for="ef_\${i}">\${esc(m.label)}\${m.kind === "price" ? "" : \`<span class="ed-count" id="ec_\${i}"></span>\`}</label>
+      \${fieldInput(ed.fields[i], i, m)}
+      \${m.hint ? \`<div class="ed-hint">\${esc(m.hint)}</div>\` : ""}
+    </div>\`;
+  }).join("");
+  const others = ed.fields.map((f, i) => ({ f, i })).filter((x) => !used.has(x.i));
+  const otherHtml = others.map(({ f, i }) => f.file
+    ? \`<div class="ed-o file"><div class="ed-on"><code>\${esc(f.name)}</code><span>ファイルの項目(変更できません。空のまま送ります)</span></div></div>\`
+    : \`<div class="ed-f ed-o" data-i="\${i}"><label for="ef_\${i}"><code>\${esc(f.name)}</code>\${FIELD_NOTE[f.name] ? \`<span class="ed-note">\${esc(FIELD_NOTE[f.name])}</span>\` : ""}</label>\${fieldInput(f, i)}</div>\`).join("");
+  $("#sheet").innerHTML = \`
+    <div class="ed-back"></div>
+    <div class="ed" role="dialog" aria-modal="true" aria-labelledby="ed_title">
+      <div class="ed-head">
+        <div>
+          <div class="ed-site">\${esc(SN())}</div>
+          <h2 id="ed_title">\${ed.copy ? \`「\${esc(d.label)}」を複製して新しい下書きを作る\` : \`下書きを編集\`}</h2>
+        </div>
+        <button class="btn gho sm" id="ed_x" aria-label="閉じる">閉じる</button>
+      </div>
+      <div class="ed-body">
+        \${ed.copy ? \`<div class="banner info" style="margin:0 0 14px"><div>元の下書きはそのまま残ります。ここで変えた内容は、<b>新しい下書き</b>として一覧の最後に追加されます。画像は元の下書きと同じものが使われます。</div></div>\` : ""}
+        <div class="ed-row">
+          <div class="ed-f"><label for="ed_label">管理名<span class="ed-note">自分用のメモ。空欄なら商品名が入ります</span></label><input type="text" id="ed_label" value="\${esc(ed.copy ? "" : d.label)}" placeholder="\${esc(ed.copy ? d.label + "(コピー)" : "")}" maxlength="60" autocomplete="off"></div>
+          <div class="ed-f ed-id"><label for="ed_id">下書き番号<span class="ed-note">画像はこの番号の下書きのもの</span></label><input type="text" id="ed_id" value="\${esc(d.draftId)}" inputmode="numeric" autocomplete="off"></div>
+        </div>
+        \${main}
+        <details class="ed-more">
+          <summary>その他の項目(\${others.length}件) <span class="muted">ふだんは触らなくて大丈夫です</span></summary>
+          <div class="ed-more-b">\${otherHtml}</div>
+        </details>
+      </div>
+      <div class="ed-foot">
+        <div class="ed-msg" id="ed_msg" aria-live="polite"></div>
+        <button class="btn gho" id="ed_cancel">キャンセル</button>
+        \${ed.copy ? "" : \`<button class="btn" id="ed_tocopy" title="今の入力内容で新しい下書きを作ります(元の下書きは変わりません)">新しい下書きとして保存</button>\`}
+        <button class="btn p" id="ed_save">\${ed.copy ? "新しい下書きとして保存" : "保存する"}</button>
+      </div>
+    </div>\`;
+  document.body.classList.add("ed-open");
+  const sheet = $("#sheet");
+  const update = () => {
+    ed.fields.forEach((f, i) => {
+      const el = document.getElementById("ef_" + i), c = document.getElementById("ec_" + i);
+      if (!el) return;
+      const changed = !ed.copy && el.value !== f.value;
+      el.closest(".ed-f")?.classList.toggle("chg", changed);
+      if (c) c.textContent = \`\${el.value.length}文字\`;
+    });
+    const dirty = ed.dirty();
+    $("#ed_msg").textContent = dirty ? "保存していない変更があります" : "";
+  };
+  sheet.addEventListener("input", update);
+  update();
+  $("#ed_x").onclick = () => closeEditor();
+  $("#ed_cancel").onclick = () => closeEditor();
+  $(".ed-back").onclick = () => closeEditor();
+  $("#ed_save").onclick = () => saveEditor(ed.copy);
+  if ($("#ed_tocopy")) $("#ed_tocopy").onclick = () => saveEditor(true);
+  setTimeout(() => { const n = document.getElementById(ed.copy ? "ed_label" : "ed_id"); if (ed.copy && n) n.focus(); }, 50);
+}
+
+async function saveEditor(asNew) {
+  const ed = editor; if (!ed) return;
+  const v = readEditor();
+  if (!/^\\d+$/.test(v.draftId)) return editorError("下書き番号は数字で入力してください。", "#ed_id");
+  const fields = ed.fields.map((f, i) => (f.file ? { name: f.name, file: true } : { name: f.name, value: v.f[i] }));
+  const ni = ed.fields.findIndex((f) => f.name === "name" && !f.file), pi = ed.fields.findIndex((f) => f.name === "price" && !f.file);
+  if (ni >= 0 && !v.f[ni].trim()) return editorError("商品名を入力してください。", "#ef_" + ni);
+  if (pi >= 0 && !/^[0-9０-９,，円\\s]+$/.test(v.f[pi]) ) return editorError("価格は数字だけで入力してください(例: 3333)。", "#ef_" + pi);
+  const btns = $$("#sheet .ed-foot .btn"); btns.forEach((b) => (b.disabled = true));
+  try {
+    if (asNew) {
+      const label = v.label.trim() || (ed.copy ? \`\${ed.base.label}(コピー)\` : "");
+      const r = await api("/drafts", { method: "POST", body: JSON.stringify({ draftId: v.draftId, copyOf: ed.key, label, fields }) });
+      toast(\`新しい下書き「\${r.draft.label}」を追加しました\`);
+    } else {
+      const r = await api("/drafts/" + ed.key, { method: "PATCH", body: JSON.stringify({ label: v.label, draftId: v.draftId, fields, baseUpdatedAt: ed.base.updatedAt || null }) });
+      toast(r.changed.length ? \`保存しました(\${r.changed.length}か所)\` : "変更はありませんでした");
+    }
+    closeEditor(true);
+    refresh();
+  } catch (e) {
+    btns.forEach((b) => (b.disabled = false));
+    editorError(e.message);
+  }
+}
+function editorError(msg, focusSel) {
+  const m = $("#ed_msg"); if (m) { m.textContent = msg; m.classList.add("bad"); setTimeout(() => m.classList.remove("bad"), 4000); }
+  if (focusSel) { const el = $(focusSel); if (el) { el.focus(); el.closest(".ed-f")?.classList.add("err"); setTimeout(() => el.closest(".ed-f")?.classList.remove("err"), 2500); } }
+  window.Snd && Snd.fail();
+}
+function closeEditor(force) {
+  if (!editor) return;
+  if (!force && editor.dirty() && !confirm("保存していない変更があります。破棄して閉じますか?")) return;
+  editor = null;
+  $("#sheet").innerHTML = "";
+  document.body.classList.remove("ed-open");
+}
+document.addEventListener("keydown", (e) => {
+  if (!editor) return;
+  if (e.key === "Escape") { e.preventDefault(); closeEditor(); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveEditor(editor.copy); }
+});
+window.addEventListener("beforeunload", (e) => { if (editor && editor.dirty()) { e.preventDefault(); e.returnValue = ""; } });
+
+// ---- 旧M&Aクラブ版からの引っ越し(設定タブ・M&Aクラブのときだけ) ----
+function migrateCardHtml() {
+  if (site !== "mac") return "";
+  return \`<div class="card" id="mg_card">
+    <h2>旧M&Aクラブ版から引っ越す</h2>
+    <div class="muted" style="margin-bottom:10px">以前の「mac-scheduler」に入っている下書き・設定・ログイン情報・売れ行きの記録・ログを、このツールにコピーします。旧ツールの中身は変わりません。<b>二重出品を防ぐため、引っ越し直後は「停止中」になります。</b></div>
+    <div id="mg_box" class="muted">確認中…</div>
+  </div>\`;
+}
+async function bindMigrate() {
+  const box = $("#mg_box"); if (!box) return;
+  let info;
+  try { info = await api("/migrate-mac"); } catch (e) { if (box.isConnected) box.innerHTML = \`<span class="bad">\${esc(e.message)}</span>\`; return; }
+  // 読み込みの間に設定タブが描き直されていたら、新しい枠の方に任せる
+  if (!box.isConnected || site !== "mac") return;
+  const o = info.old || {};
+  if (!o.bound) { box.innerHTML = "旧ツールの保存領域につながっていません。引っ越しは不要か、すでに旧ツールを削除済みです。"; return; }
+  if (o.error) { box.innerHTML = \`<span class="bad">旧ツールを読めませんでした: \${esc(o.error)}</span>\`; return; }
+  const done = info.done;
+  box.innerHTML = \`
+    <dl class="dl">
+      <dt>旧ツールの中身</dt><dd>\${o.empty ? "データなし" : \`下書き \${o.drafts}件\${o.draftLabels && o.draftLabels.length ? \`(\${o.draftLabels.map(esc).join("、")})\` : ""} ・ 売れ行きの記録 \${o.own}件 ・ ログイン情報 \${o.session ? "あり" : "なし"}\`}</dd>
+      <dt>状態</dt><dd>\${done ? \`<span class="pill ok">引っ越し済み</span> \${fmtDate(done.at)}(下書き\${done.drafts}件・出品記録\${done.logs}件・動作ログ\${done.ops}件)\` : \`<span class="pill off">まだ</span>\${info.currentDrafts ? \` ・ こちらに下書きが\${info.currentDrafts}件あります(上書きされます)\` : ""}\`}</dd>
+    </dl>
+    <div class="row" style="margin-top:10px"><button class="btn \${done ? "" : "p"}" id="mg_go" \${o.empty ? "disabled" : ""}>\${done ? "もう一度引っ越す(上書き)" : "引っ越す"}</button></div>
+    <div id="mg_msg" style="margin-top:10px"></div>\`;
+  const go = box.querySelector("#mg_go"); if (!go) return;
+  go.onclick = async (e) => {
+    if (!confirm(done || info.currentDrafts ? "今のM&Aクラブ側の下書き・設定・ログイン情報は、旧ツールの内容で上書きされます。よろしいですか?" : "旧M&Aクラブ版のデータをこのツールにコピーします。よろしいですか?")) return;
+    e.target.disabled = true; $("#mg_msg").innerHTML = '<span class="muted">引っ越し中…</span>';
+    try {
+      let r = await api("/migrate-mac", { method: "POST", body: JSON.stringify({ force: !!done }) });
+      if (r.needForce) r = await api("/migrate-mac", { method: "POST", body: JSON.stringify({ force: true }) });
+      $("#mg_msg").innerHTML = \`<div class="banner info" style="margin:0"><div><b>引っ越しました。</b>下書き\${r.drafts}件・出品記録\${r.logs}件・動作ログ\${r.ops}件。いまは<b>停止中</b>です。旧ツールを止めてから(またはもう動いていないことを確かめてから)、ホームのスイッチをオンにしてください。</div></div>\`;
+      window.Snd && Snd.success();
+      toast(\`引っ越しました(下書き\${r.drafts}件)。いまは停止中です\`);
+      refresh(); loadOverview();
+    } catch (err) { $("#mg_msg").innerHTML = \`<span class="bad">\${esc(err.message)}</span>\`; e.target.disabled = false; }
+  };
+}
+
+if (pw) { fetch("/api/state", { headers: { "x-admin-key": encodeURIComponent(pw), "x-site": site } }).then((r) => { if (r.ok) start(); else { sessionStorage.removeItem(KEY); } }); }
 </script>
 <script>
 // サウンドのON/OFFボタン
