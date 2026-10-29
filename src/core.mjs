@@ -131,7 +131,7 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
     ownLog.debug("出品", `送信データを作成: ${pf.length}項目・出品期限を ${ld} ${lt}時 に設定(約100年後=実質無期限)・画像は下書きに保存済みのものを使用`, { 画像: (pf.find((f) => f.name.startsWith("item_images")) || {}).value });
   } catch {}
   const pubFetcher = createFetcher(store, ownLog, { gap: false, site }); // 出品は単発なので間隔待ち不要
-  const result = await publishDraft(draft, { phpsessid: secret.phpsessid, cf: secret.cf, ua: secret.ua, chua: secret.chua }, { now, fetcher: pubFetcher });
+  const result = await publishDraft(draft, { phpsessid: secret.phpsessid, cf: secret.cf, ua: secret.ua, chua: secret.chua, extra: secret.extra }, { now, fetcher: pubFetcher });
   await pubFetcher.finish();
   if (result.ok) ownLog.info("出品", `出品に成功しました: 「${draft.label}」→ 出品番号 ${result.listingId}(通信の出どころ ${result.colo || "不明"})`, { listingId: result.listingId, url: result.url, status: result.status, colo: result.colo });
   else ownLog.error("出品", `出品に失敗しました: 「${draft.label}」${result.message}`, { kind: result.kind, status: result.status, colo: result.colo });

@@ -121,9 +121,28 @@ export function cleanSession(s) {
 // 通行証はブラウザの指紋と結びついているので、cf を使うときは ua も同じブラウザのものにそろえる。
 export function asCreds(session) {
   if (session && typeof session === "object") {
-    return { phpsessid: cleanSession(session.phpsessid), cf: cleanCf(session.cf), ua: (session.ua || "").trim(), chua: session.chua && typeof session.chua === "object" ? session.chua : null };
+    return { phpsessid: cleanSession(session.phpsessid), cf: cleanCf(session.cf), ua: (session.ua || "").trim(), chua: session.chua && typeof session.chua === "object" ? session.chua : null, extra: session.extra && typeof session.extra === "object" ? session.extra : null };
   }
-  return { phpsessid: cleanSession(session), cf: "", ua: "", chua: null };
+  return { phpsessid: cleanSession(session), cf: "", ua: "", chua: null, extra: null };
+}
+
+// 出品時に追加するヘッダーのうち、ツールが自分で正しく決めるもの・付けると害になるものは
+// ユーザーが貼っても無視する。
+//  - cookie / content-length / host 系: ツールや通信層が正しい値を付ける。古い値を混ぜると壊れる
+//  - sec-fetch-*: 「ページの中から送った」ことを主張するヘッダー。サーバーから手で付けるのは偽装に近いので付けない
+//    (本当にブラウザのページから送る方式に進んだときだけ、本物として付く)
+const BLOCKED_EXTRA = /^(cookie|content-length|content-type|host|connection|:|accept-encoding$|sec-fetch-|user-agent$|accept-language$|origin$|referer$|x-requested-with$|accept$)/i;
+// ヘッダーの貼り付けテキスト(「名前: 値」を1行ずつ)を、送ってよいものだけの表にする
+export function parseHeaderLines(raw) {
+  const out = {};
+  for (const line of String(raw || "").split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z][A-Za-z0-9-]*)\s*[:：]\s*(.+?)\s*$/);
+    if (!m) continue;
+    const name = m[1].toLowerCase();
+    if (BLOCKED_EXTRA.test(name)) continue;
+    out[name] = m[2];
+  }
+  return Object.keys(out).length ? out : null;
 }
 // cf_clearance の値だけを取り出す(「cf_clearance=…」ごと貼られても、ほかのCookieが混ざっていても拾う)
 export function cleanCf(s) {
@@ -138,12 +157,14 @@ export async function gcFetch(path, session, opts = {}, fetcher = null, meta = {
   const { headers, ...rest } = opts;
   const c = asCreds(session);
   const cookie = [c.phpsessid ? `PHPSESSID=${c.phpsessid}` : "", c.cf ? `cf_clearance=${c.cf}` : ""].filter(Boolean).join("; ");
-  // sec-ch-ua 系は、cf(通行証)と ua の両方があるときだけ付ける(通行証なしで付けるとかえって不自然)
-  const ch = c.cf && c.ua && c.chua ? c.chua : null;
+  // sec-ch-ua 系・追加ヘッダーは、cf(通行証)と ua の両方があるときだけ付ける(通行証なしで付けるとかえって不自然)
+  const dress = c.cf && c.ua;
+  const ch = dress && c.chua ? c.chua : null;
+  const extra = dress && c.extra ? c.extra : null;
   return f(siteOfFetcher(fetcher).origin + path, {
     ...rest,
     redirect: "manual",
-    headers: { "User-Agent": c.ua || UA, "Accept-Language": "ja", ...(cookie ? { Cookie: cookie } : {}), ...(ch || {}), ...(headers || {}) },
+    headers: { "User-Agent": c.ua || UA, "Accept-Language": "ja", ...(cookie ? { Cookie: cookie } : {}), ...(ch || {}), ...(extra || {}), ...(headers || {}) },
   }, meta);
 }
 

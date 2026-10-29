@@ -1725,10 +1725,11 @@ function clearanceCardHtml() {
   return \`<div class="card">
     <h2>Cloudflareの通行証 <span class="q">出品が確認画面で止められるとき</span></h2>
     <div class="muted" style="margin-bottom:10px">\${esc(SN())}が出品の送信だけを確認画面(403)で止めるとき、あなたのブラウザが持っている本物の通行証(<code>cf_clearance</code>)を、ツールの出品にも付けて送ります。<b>ごまかしではなく、あなたのブラウザの操作を正しく代理する</b>ための設定です。普段は空のままで大丈夫です。</div>
-    <div class="muted" style="margin-bottom:10px">現在: \${c.set ? \`<span class="pill ok">登録済み</span>\${clearanceAgeNote(c.at)}\${c.ua ? "" : ' <span class="pill off">名乗り未設定</span>'}\` : '<span class="pill off">未登録</span>'}</div>
+    <div class="muted" style="margin-bottom:10px">現在: \${c.set ? \`<span class="pill ok">登録済み</span>\${clearanceAgeNote(c.at)}\${c.ua ? "" : ' <span class="pill off">名乗り未設定</span>'}\${c.extra ? \` <span class="muted">追加ヘッダー\${c.extra}項目</span>\` : ""}\` : '<span class="pill off">未登録</span>'}</div>
     <div class="field"><label>cf_clearance の値</label><input type="password" id="cf_val" placeholder="Cookie の cf_clearance= の後ろを貼り付け"></div>
     <div class="field"><label>user-agent(ブラウザの名乗り)</label><input type="text" id="cf_ua" placeholder="Request Headers の user-agent の行を貼り付け" autocomplete="off"></div>
     <div class="field"><label>sec-ch-ua 系(任意・まとめて貼れます)</label><textarea id="cf_chua" rows="4" placeholder="Request Headers の sec-ch-ua で始まる行を、まとめて貼り付け"></textarea></div>
+    <div class="field"><label>その他の追加ヘッダー(任意)<span class="muted" style="font-weight:400"> ブラウザにそろえたいとき</span></label><textarea id="cf_extra" rows="4" placeholder="Request Headers の行を、まとめて貼り付け(priority, prefer, sec-ch-ua-arch など)"></textarea><div class="muted" style="font-size:12px;margin-top:4px">Request Headers をまるごと貼ってOKです。cookie・content-length・sec-fetch- で始まる行などは、ツールが自動で正しく扱うので無視します。</div></div>
     <div class="row">
       <button class="btn p" id="cf_save">保存</button>
       <button class="btn" id="cf_test" \${!state.session.set ? "disabled" : ""}>接続テスト</button>
@@ -1751,13 +1752,13 @@ function clearanceCardHtml() {
 async function bindClearance() {
   const save = $("#cf_save"); if (!save) return;
   save.onclick = async () => {
-    const cf = $("#cf_val").value.trim(), ua = $("#cf_ua").value.trim(), chua = $("#cf_chua").value;
+    const cf = $("#cf_val").value.trim(), ua = $("#cf_ua").value.trim(), chua = $("#cf_chua").value, extra = $("#cf_extra").value;
     if (!cf) return toast("cf_clearance の値を入力してください(削除は「削除」ボタン)", true);
     save.disabled = true;
     try {
-      await api("/clearance", { method: "POST", body: JSON.stringify({ cf, ua, chua }) });
+      await api("/clearance", { method: "POST", body: JSON.stringify({ cf, ua, chua, extra }) });
       toast("通行証を保存しました");
-      $("#cf_val").value = ""; $("#cf_ua").value = ""; $("#cf_chua").value = "";
+      $("#cf_val").value = ""; $("#cf_ua").value = ""; $("#cf_chua").value = ""; $("#cf_extra").value = "";
       refresh();
     } catch (e) { toast(e.message, true); save.disabled = false; }
   };
