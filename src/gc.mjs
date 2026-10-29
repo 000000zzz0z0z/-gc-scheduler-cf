@@ -112,18 +112,38 @@ export function prepareFields(fields, now) {
   });
 }
 
-function cleanSession(s) {
+export function cleanSession(s) {
   return String(s || "").trim().replace(/^PHPSESSID=/i, "").replace(/;.*$/, "").trim();
+}
+
+// session は、文字列(PHPSESSIDだけ)でも、オブジェクト {phpsessid, cf, ua, chua} でもよい。
+// cf = Cloudflareの通行証(cf_clearance)、ua = ブラウザの名乗り、chua = sec-ch-ua 系のヘッダー。
+// 通行証はブラウザの指紋と結びついているので、cf を使うときは ua も同じブラウザのものにそろえる。
+export function asCreds(session) {
+  if (session && typeof session === "object") {
+    return { phpsessid: cleanSession(session.phpsessid), cf: cleanCf(session.cf), ua: (session.ua || "").trim(), chua: session.chua && typeof session.chua === "object" ? session.chua : null };
+  }
+  return { phpsessid: cleanSession(session), cf: "", ua: "", chua: null };
+}
+// cf_clearance の値だけを取り出す(「cf_clearance=…」ごと貼られても、ほかのCookieが混ざっていても拾う)
+export function cleanCf(s) {
+  const t = String(s || "").trim();
+  const m = t.match(/cf_clearance=([^;\s]+)/);
+  return (m ? m[1] : t.replace(/;.*$/, "")).trim();
 }
 
 // fetcher: net.mjs の通信制御(省略時は素のfetch)。meta: ログ用の情報
 export async function gcFetch(path, session, opts = {}, fetcher = null, meta = {}) {
   const f = fetcher || ((u, i) => fetch(u, i));
   const { headers, ...rest } = opts;
+  const c = asCreds(session);
+  const cookie = [c.phpsessid ? `PHPSESSID=${c.phpsessid}` : "", c.cf ? `cf_clearance=${c.cf}` : ""].filter(Boolean).join("; ");
+  // sec-ch-ua 系は、cf(通行証)と ua の両方があるときだけ付ける(通行証なしで付けるとかえって不自然)
+  const ch = c.cf && c.ua && c.chua ? c.chua : null;
   return f(siteOfFetcher(fetcher).origin + path, {
     ...rest,
     redirect: "manual",
-    headers: { "User-Agent": UA, "Accept-Language": "ja", ...(session ? { Cookie: `PHPSESSID=${cleanSession(session)}` } : {}), ...(headers || {}) },
+    headers: { "User-Agent": c.ua || UA, "Accept-Language": "ja", ...(cookie ? { Cookie: cookie } : {}), ...(ch || {}), ...(headers || {}) },
   }, meta);
 }
 

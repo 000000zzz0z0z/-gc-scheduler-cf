@@ -96,7 +96,7 @@ async function handleApi(request, env, path, baseEnv = env) {
       // 次の出品予定(実際の自動実行と同じルールで計算)
       let plan;
       try { plan = planUpcoming({ settings, state, drafts, lockLast: force["lock:last"] || 0, hasSession: !!secret.phpsessid, now }); } catch (e) { plan = { blocked: "error", message: "予定の計算に失敗しました: " + e.message, items: [], today: {} }; }
-      return json({ now, site: { id: site.id, name: site.name }, plan, lockLast: force["lock:last"] || 0, migratedFrom: force["migrated:from"] || null, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick, net, force: { pending: force.forcePublish || null, result: force.forceResult || null }, ext: force["ext:info"] || null });
+      return json({ now, site: { id: site.id, name: site.name }, plan, lockLast: force["lock:last"] || 0, migratedFrom: force["migrated:from"] || null, settings, session: { set: !!secret.phpsessid, updatedAt: secret.updatedAt || null }, clearance: { set: !!secret.cf, ua: !!secret.ua, chua: secret.chua ? Object.keys(secret.chua).length : 0, at: secret.cfAt || null }, drafts: drafts.map(draftSummary), nextDraftKey: idx >= 0 ? drafts[idx].key : null, slots: computeSlots(settings.schedule, settings.dailyLimit), today: state.days[dayKey(now)] || { count: 0, slots: {} }, alert: state.alert, lastTick, net, force: { pending: force.forcePublish || null, result: force.forceResult || null }, ext: force["ext:info"] || null });
     }
     if (method === "GET" && sub[0] === "logs" && sub.length === 1) return json({ logs: await loadLogs(env, 3000) });
 
@@ -110,10 +110,35 @@ async function handleApi(request, env, path, baseEnv = env) {
     if (method === "POST" && sub[0] === "session") {
       const v = String(body.phpsessid || "").trim().replace(/^PHPSESSID=/i, "").replace(/;.*$/, "").trim();
       if (!/^[A-Za-z0-9,-]{10,128}$/.test(v)) throw new Error("PHPSESSIDの値の形式が正しくありません。値の部分だけを貼り付けてください。");
-      await save(env, "secret", { phpsessid: v, updatedAt: Date.now() });
+      const prev = await load(env, "secret");
+      // 通行証(cf/ua/chua)はそのまま残す。PHPSESSIDだけ入れ替える
+      await save(env, "secret", { ...prev, phpsessid: v, updatedAt: Date.now() });
       await adminLog(env, "ログイン情報(PHPSESSID)を登録しました");
       const state = await load(env, "state");
       if (state.alert?.kind === "session") { state.alert = null; await save(env, "state", state); }
+      return json({ ok: true });
+    }
+
+    // Cloudflareの通行証(cf_clearance)とブラウザの名乗り。出品が確認画面(403)で止められるときに使う。
+    if (method === "POST" && sub[0] === "clearance") {
+      const { cleanCf } = await import("./gc.mjs");
+      const prev = await load(env, "secret");
+      const cf = cleanCf(body.cf || "");
+      if (cf && cf.length < 20) throw new Error("通行証(cf_clearance)の値が短すぎます。Cookieの中の cf_clearance= の後ろを貼り付けてください。");
+      const ua = String(body.ua || "").trim().replace(/[\r\n]/g, "").slice(0, 400);
+      // sec-ch-ua 系は「ヘッダー名: 値」を1行ずつ貼れる。関係する行だけ拾う
+      let chua = null;
+      const raw = String(body.chua || "");
+      if (raw.trim()) {
+        chua = {};
+        for (const line of raw.split(/\r?\n/)) {
+          const m = line.match(/^\s*(sec-ch-ua[a-z-]*)\s*[:：]\s*(.+?)\s*$/i);
+          if (m) chua[m[1].toLowerCase()] = m[2];
+        }
+        if (!Object.keys(chua).length) chua = null;
+      }
+      await save(env, "secret", { ...prev, cf, ua, chua, cfAt: cf ? Date.now() : null });
+      await adminLog(env, cf ? "Cloudflareの通行証(cf_clearance)を登録しました" : "Cloudflareの通行証を削除しました", cf ? { ブラウザの名乗り: ua ? "あり" : "なし", "sec-ch-ua": chua ? Object.keys(chua).length + "項目" : "なし" } : undefined);
       return json({ ok: true });
     }
     if (method === "DELETE" && sub[0] === "session") { await save(env, "secret", {}); await adminLog(env, "ログイン情報を削除しました"); return json({ ok: true }); }
@@ -126,7 +151,7 @@ async function handleApi(request, env, path, baseEnv = env) {
       const st = db(env);
       const viaRelay = (u, i) => relay(st, u, i);
       viaRelay.site = site; // 送り先のサイト
-      const r = await testConnection(secret.phpsessid, { fetcher: viaRelay });
+      const r = await testConnection({ phpsessid: secret.phpsessid, cf: secret.cf, ua: secret.ua, chua: secret.chua }, { fetcher: viaRelay });
       await adminLog(env, `接続テスト: ${r.ok ? "成功" : "失敗"} - ${r.message}`, { status: r.status, colo: r.colo });
       return json(r);
     }

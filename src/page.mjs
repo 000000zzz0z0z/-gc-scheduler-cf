@@ -721,7 +721,8 @@ function renderBanners() {
   const a = state.alert;
   if (a) {
     const cls = a.kind === "session" ? "warn" : "bad";
-    b.innerHTML += \`<div class="banner \${cls}"><div><b>\${a.kind === "session" ? "ログイン状態が切れました" : "アクセスが拒否されました"}</b><br>\${esc(a.message)}<br><span class="muted">\${fmtDate(a.at)}</span></div><button class="btn gho sm x" onclick="clearAlert()">×</button></div>\`;
+    const hint = a.kind === "blocked" ? \`<br><span class="muted">出品だけが止められているときは、「設定」タブの<b>Cloudflareの通行証</b>を登録すると通ることがあります。</span>\` : "";
+    b.innerHTML += \`<div class="banner \${cls}"><div><b>\${a.kind === "session" ? "ログイン状態が切れました" : "アクセスが拒否されました"}</b><br>\${esc(a.message)}\${hint}<br><span class="muted">\${fmtDate(a.at)}</span></div><button class="btn gho sm x" onclick="clearAlert()">×</button></div>\`;
   }
   if (!state.session.set) {
     b.innerHTML += \`<div class="banner info">はじめに「設定」タブで、\${SN()}のログイン情報(PHPSESSID)を登録してください。</div>\`;
@@ -1390,6 +1391,7 @@ function renderSettings() {
         ブラウザでログアウトすると無効になります。普段どおり放置すれば長期間有効です。
       </div></details>
     </div>
+    \${clearanceCardHtml()}
     <div class="card">
       <h2>日本からの外部起動</h2>
       <div class="muted" style="margin-bottom:10px">Cloudflareの自動実行は、\${SN()}から「アメリカからの通信」と見られて止められます。そこで、<b>日本のサーバーが1分おきに下のURLを開く</b>ことでツールを動かします(その通信は「日本」と見られるので通れます)。URLには合言葉が入っているので、他人に見せないでください。</div>
@@ -1433,6 +1435,7 @@ function renderSettings() {
     $("#ex_regen").onclick = async () => { if (!confirm("合言葉を作り直します。今のURL・コマンドは使えなくなります。よろしいですか?")) return; try { drawExt(await api("/ext/regen", { method: "POST", body: "{}" })); toast("作り直しました。サーバーのコマンドも貼り直してください"); } catch (e) { toast(e.message, true); } };
   };
   api("/ext").then(drawExt).catch((e) => { $("#ex_box").textContent = e.message; });
+  bindClearance();
   bindMigrate();
 
   // ---- 原因究明の実験 ----
@@ -1707,6 +1710,67 @@ document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveEditor(editor.copy); }
 });
 window.addEventListener("beforeunload", (e) => { if ((editor && editor.dirty()) || (bulk && bulk.dirty())) { e.preventDefault(); e.returnValue = ""; } });
+
+// ---- Cloudflareの通行証(cf_clearance) ----
+// 出品の送信だけが確認画面(403)で止められるとき、ブラウザが持っている本物の通行証を
+// ツールにも持たせて、正面から通す。値は数時間〜1日で切れるので、切れたら貼り直す。
+function clearanceAgeNote(at) {
+  if (!at) return "";
+  const h = Math.floor((nowMs() - at) / 3600e3);
+  const warn = h >= 12;
+  return \` <span class="muted">(\${h < 1 ? "1時間以内" : h + "時間前"}に登録\${warn ? " ・ 切れているかも" : ""})</span>\`;
+}
+function clearanceCardHtml() {
+  const c = state.clearance || { set: false };
+  return \`<div class="card">
+    <h2>Cloudflareの通行証 <span class="q">出品が確認画面で止められるとき</span></h2>
+    <div class="muted" style="margin-bottom:10px">\${esc(SN())}が出品の送信だけを確認画面(403)で止めるとき、あなたのブラウザが持っている本物の通行証(<code>cf_clearance</code>)を、ツールの出品にも付けて送ります。<b>ごまかしではなく、あなたのブラウザの操作を正しく代理する</b>ための設定です。普段は空のままで大丈夫です。</div>
+    <div class="muted" style="margin-bottom:10px">現在: \${c.set ? \`<span class="pill ok">登録済み</span>\${clearanceAgeNote(c.at)}\${c.ua ? "" : ' <span class="pill off">名乗り未設定</span>'}\` : '<span class="pill off">未登録</span>'}</div>
+    <div class="field"><label>cf_clearance の値</label><input type="password" id="cf_val" placeholder="Cookie の cf_clearance= の後ろを貼り付け"></div>
+    <div class="field"><label>user-agent(ブラウザの名乗り)</label><input type="text" id="cf_ua" placeholder="Request Headers の user-agent の行を貼り付け" autocomplete="off"></div>
+    <div class="field"><label>sec-ch-ua 系(任意・まとめて貼れます)</label><textarea id="cf_chua" rows="4" placeholder="Request Headers の sec-ch-ua で始まる行を、まとめて貼り付け"></textarea></div>
+    <div class="row">
+      <button class="btn p" id="cf_save">保存</button>
+      <button class="btn" id="cf_test" \${!state.session.set ? "disabled" : ""}>接続テスト</button>
+      \${c.set ? '<button class="btn gho" id="cf_del">削除</button>' : ""}
+    </div>
+    <div class="muted" id="cf_msg" style="margin-top:10px"></div>
+    <details class="help"><summary>値の取り方(3つとも同じ画面から)</summary><div>
+      <ol>
+        <li>\${esc(SN())}で、下書きから商品を1件、手で出品する(確認画面が出たら解いてから)</li>
+        <li>その前に F12 → <b>Network</b> を開き、「Preserve log」にチェック</li>
+        <li>出品の送信(<code>add?draft=…</code>)をクリック → <b>Headers</b> → <b>Request Headers</b></li>
+        <li><code>cookie</code> の中の <code>cf_clearance=</code> の後ろ(次の <code>;</code> まで)を1つ目の欄へ</li>
+        <li><code>user-agent</code> の行の値を2つ目の欄へ</li>
+        <li><code>sec-ch-ua</code> で始まる行を全部まとめて3つ目の欄へ(<code>sec-ch-ua: …</code> のように名前ごと貼ってOK)</li>
+      </ol>
+      <b>大事:</b> 通行証はブラウザと結びついているので、必ず<b>同じブラウザ</b>の値をそろえて入れてください。値は数時間〜1日で切れます。切れたら、同じ手順で貼り直してください。
+    </div></details>
+  </div>\`;
+}
+async function bindClearance() {
+  const save = $("#cf_save"); if (!save) return;
+  save.onclick = async () => {
+    const cf = $("#cf_val").value.trim(), ua = $("#cf_ua").value.trim(), chua = $("#cf_chua").value;
+    if (!cf) return toast("cf_clearance の値を入力してください(削除は「削除」ボタン)", true);
+    save.disabled = true;
+    try {
+      await api("/clearance", { method: "POST", body: JSON.stringify({ cf, ua, chua }) });
+      toast("通行証を保存しました");
+      $("#cf_val").value = ""; $("#cf_ua").value = ""; $("#cf_chua").value = "";
+      refresh();
+    } catch (e) { toast(e.message, true); save.disabled = false; }
+  };
+  if ($("#cf_del")) $("#cf_del").onclick = async () => {
+    if (!confirm("通行証を削除しますか?(出品は元のPHPSESSIDだけで送られます)")) return;
+    try { await api("/clearance", { method: "POST", body: JSON.stringify({ cf: "" }) }); toast("削除しました"); refresh(); } catch (e) { toast(e.message, true); }
+  };
+  if ($("#cf_test")) $("#cf_test").onclick = async () => {
+    const m = $("#cf_msg"); m.textContent = "確認中…";
+    try { const r = await api("/test", { method: "POST" }); m.innerHTML = r.ok ? \`<span class="pill ok">通れました</span> 出どころ \${esc(r.colo || "?")}\` : \`<span class="pill off">\${esc(r.message || "通れませんでした")}</span>\`; }
+    catch (e) { m.textContent = e.message; }
+  };
+}
 
 // ---- 旧M&Aクラブ版からの引っ越し(設定タブ・M&Aクラブのときだけ) ----
 function migrateCardHtml() {
