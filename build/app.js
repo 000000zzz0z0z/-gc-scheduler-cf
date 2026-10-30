@@ -544,7 +544,7 @@ function renderOwnView(a) {
 // ---- ログ(リアルタイム) ----
 // ツールとの間に専用回線(WebSocket)を張り、ログが書かれた瞬間に受け取って、上から滑り込ませる。
 // 回線がつながらない環境では、5秒ごとに取りに行く方式に自動で切り替える。
-const LOG_CATS = ["すべて", "定期実行", "出品", "売れ行き", "最適化", "通信", "管理画面", "アクセス", "システム"];
+const LOG_CATS = ["すべて", "定期実行", "出品", "更新", "売れ行き", "最適化", "通信", "管理画面", "アクセス", "システム"];
 let opsBuf = [], opsIds = new Set(), opsNewest = "", opsCat = "すべて", opsLevel = "info", opsPaused = false, opsNet = null, opsOpen = new Set(), opsQ = "", opsTrace = "";
 let ws = null, wsState = "off", wsRetry = 0, wsTimer = null, wsPing = null, pollTimer = null, held = [];
 
@@ -809,6 +809,15 @@ function renderSettings() {
       <div id="dg_out" style="margin-top:12px"></div>
     </div>
     <div class="card">
+      <h2>更新ボタンのテスト(1回だけ)</h2>
+      <div class="muted" style="margin-bottom:10px">出品中の商品を一覧の先頭へ上げる「更新」を、ツールから<b>1回だけ</b>送って、通れるかを確かめます。次の自動実行(1分以内)で、本番と同じ経路で送ります。<b>ホームのスイッチがオフのままでも動きます。</b>ログイン情報はPHPSESSIDだけを使います。成功すると、今日の回数(出品と共通の上限)を1つ使います。商品番号を空欄にすると、出品中の1ページ目のいちばん下の商品を自動で選びます(先頭へ動いたかが分かりやすいため)。</div>
+      <div class="row">
+        <input id="bt_pid" inputmode="numeric" placeholder="商品番号(空欄で自動)" style="max-width:220px">
+        <button class="btn p" id="bt_go">更新テストを予約</button>
+      </div>
+      <div id="bt_out" style="margin-top:12px"></div>
+    </div>
+    <div class="card">
       <h2>通信の出どころテスト</h2>
       <div class="muted" style="margin-bottom:10px">${SN()}は日本以外からのアクセスを確認画面で止めるため、ツールは「保存領域」(場所が固定されている部分)から通信します。このボタンで、保存領域がどこの拠点にあるかと、そこから${SN()}に通れるか(ログインなしのトップページを各1回だけ読みます)を確かめ、日本から通れるものを自動で選びます。<b>新しくした直後に一度押してください。</b></div>
       <button class="btn" id="st_origin">通信の出どころテスト</button>
@@ -877,6 +886,54 @@ function renderSettings() {
   loadDiag();
   $("#dg_ui").onclick = async (e) => { e.target.disabled = true; $("#dg_out").innerHTML = '<span class="muted">実行中…(10秒ほど)</span>'; try { await api("/diag/ui", { method: "POST", body: "{}" }); await loadDiag(); } catch (err) { toast(err.message, true); } e.target.disabled = false; };
   $("#dg_auto").onclick = async (e) => { try { const r = await api("/diag/reserve", { method: "POST", body: "{}" }); toast("予約しました。1分以内に実行されます"); await loadDiag(); watchDiag(r.at); } catch (err) { toast(err.message, true); } };
+  // ---- 更新ボタンのテスト ----
+  const BT_KIND = { boosted: "成功", blocked: "確認画面で拒否", session: "ログイン切れ", unconfirmed: "送れたが未確認", unknown: "想定外の応答", notfound: "商品が見つからない", empty: "対象なし", limit: "今日の上限", interval: "間隔ルール", paused: "休止中", network: "通信エラー", expired: "予約切れ", nosession: "ログイン情報なし" };
+  const drawBoost = (d) => {
+    const r = d.result;
+    if (d.pending) { $("#bt_out").innerHTML = `<span class="muted">実行待ち…(予約 ${fmtTime(d.pending.at)}・${d.pending.productId ? "商品 " + esc(d.pending.productId) : "商品は自動で選ぶ"})</span>`; return; }
+    if (!r) { $("#bt_out").innerHTML = '<span class="muted">まだテストしていません</span>'; return; }
+    const rows = [
+      ["実行時刻", esc(fmtTime(r.at))],
+      ["結果", `${r.ok ? '<span class="okc">✓ ' : '<span class="bad">✕ '}${esc(BT_KIND[r.kind] || r.kind || "?")}</span>`],
+      r.productId ? ["商品番号", `${esc(r.productId)}${r.picked ? ` <span class="muted">(${esc(r.picked)})</span>` : ""}`] : null,
+      r.status ? ["応答", `${esc(r.status)}${r.location ? ` → ${esc(r.location)}` : ""}`] : null,
+      r.flash !== undefined ? ["「更新しました」", r.flash ? '<span class="okc">表示あり</span>' : '<span class="bad">表示なし</span>'] : null,
+      r.positionBefore ? ["一覧の位置", `${esc(r.positionBefore)}番目 → ${r.positionAfter ? esc(r.positionAfter) + "番目" : "見つからない"}`] : null,
+      r.colo ? [`${SN()}側の拠点`, esc(COLO_NAME[r.colo] || r.colo)] : null,
+      r.cfRay ? ["Cloudflare識別番号", esc(r.cfRay)] : null,
+      r.notice ? ["サイトのメッセージ", esc(r.notice)] : null,
+    ].filter(Boolean).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+    const banner = r.ok
+      ? '<div class="banner info" style="margin:10px 0 0"><div><b>ツールから更新できました。</b>この結果のスクショを送ってください。自動で更新する機能の設計に進みます。</div></div>'
+      : r.kind === "blocked"
+        ? '<div class="banner warn" style="margin:10px 0 0"><div><b>更新にもCloudflareの確認がかかっていました。</b>運営側がこの操作も止めているということなので、この方法はここで終わりにします。通信は自動で60分休止します。</div></div>'
+        : `<div class="banner warn" style="margin:10px 0 0"><div>${esc(r.message || "")}</div></div>`;
+    $("#bt_out").innerHTML = `<dl class="dl">${rows}</dl>${banner}`;
+  };
+  let btTimer = null;
+  const loadBoost = async () => { try { const d = await api("/boost"); drawBoost(d); return d; } catch (e) { $("#bt_out").textContent = e.message; } };
+  const watchBoost = (since) => {
+    clearInterval(btTimer); const t0 = Date.now();
+    btTimer = setInterval(async () => {
+      if (!$("#bt_out")) return clearInterval(btTimer);
+      const d = await loadBoost();
+      const got = d && !d.pending && d.result && d.result.reservedAt >= since;
+      if (got || Date.now() - t0 > 12 * 60e3) { clearInterval(btTimer); if (got) { toast("更新テストの結果が出ました"); window.Snd && (d.result.ok ? Snd.success() : Snd.fail()); } }
+    }, 8000);
+  };
+  loadBoost();
+  $("#bt_go").onclick = async (e) => {
+    const pid = $("#bt_pid").value.trim();
+    if (pid && !/^\d+$/.test(pid)) return toast("商品番号は数字だけで入力してください", true);
+    if (!confirm(`${pid ? "商品 " + pid : "出品中の1ページ目のいちばん下の商品"}を、ツールから1回だけ「更新」します。成功すると今日の回数を1つ使います。よろしいですか?`)) return;
+    e.target.disabled = true;
+    try {
+      const r = await api("/boost/reserve", { method: "POST", body: JSON.stringify({ productId: pid }) });
+      if (!r.ok) { toast(r.message, true); }
+      else { toast("予約しました。1分以内に実行されます"); await loadBoost(); watchBoost(r.at); }
+    } catch (err) { toast(err.message, true); }
+    e.target.disabled = false;
+  };
   $("#st_origin").onclick = async (e) => {
     e.target.disabled = true; $("#st_originMsg").innerHTML = '<span class="muted">確認中…(10秒ほどかかります)</span>';
     try {

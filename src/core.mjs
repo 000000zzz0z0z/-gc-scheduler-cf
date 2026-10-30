@@ -234,6 +234,19 @@ export async function tick(env, now = Date.now()) {
     }
   } catch (e) { log.error("システム", "原因究明の実験(自動実行)でエラーが起きました", errInfo(e)); await log.flush(store); }
 
+  // 更新ボタンのテスト(画面で予約されたもの)。停止中(スイッチオフ)でも1回だけ実行する。
+  // 画面から直接送ると「画面を操作した人の国」が付いて本番と条件が変わるため、本番と同じこの経路で送る。
+  try {
+    const br = await store.get("boostReserve");
+    if (br) {
+      await store.put("boostReserve", null);
+      log.info("定期実行", `${nowLabel} 判断: 画面から予約された「更新ボタンのテスト」を1回だけ実行します`);
+      const { runBoostReserve } = await import("./boost.mjs");
+      await runBoostReserve(env, { now, log, reserve: br, deps: { load, save, db, createFetcher, siteOfEnv } });
+      await log.flush(store);
+    }
+  } catch (e) { log.error("システム", "更新ボタンのテストでエラーが起きました", errInfo(e)); await log.flush(store); }
+
   if (settings.paused) {
     if (now - ((await store.get("lastPausedLog")) || 0) > 3600e3) {
       await store.put("lastPausedLog", now);

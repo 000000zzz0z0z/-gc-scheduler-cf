@@ -180,7 +180,7 @@ export async function gcFetch(path, session, opts = {}, fetcher = null, meta = {
   }, meta);
 }
 
-async function readRes(res) {
+export async function readRes(res) {
   const text = await res.text().catch(() => "");
   const location = res.headers.get("location") || "";
   const cf =

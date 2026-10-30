@@ -192,6 +192,32 @@ async function handleApi(request, env, path, baseEnv = env) {
         return json({ ui: g["diag:ui"] || null, auto: g["diag:auto"] || null, pending: g.diagReserve || null });
       }
     }
+    // ===== 更新ボタンのテスト(1回だけ) =====
+    // 次の自動実行(1分以内)に予約し、本番と同じ経路で1回だけ送る。停止中(スイッチオフ)でも実行される。
+    if (sub[0] === "boost") {
+      const st = db(env);
+      if (method === "POST" && sub[1] === "reserve") {
+        const [settings, secret, state, g] = await Promise.all([load(env, "settings"), load(env, "secret"), load(env, "state"), st.getMany(["lock:last", "net:pauseUntil", "boostReserve"])]);
+        const now = Date.now();
+        const no = (m) => json({ ok: false, message: m });
+        const productId = String(body.productId || "").trim();
+        if (productId && !/^\d{1,12}$/.test(productId)) return no("商品番号は数字だけで入力してください(空欄なら自動で選びます)。");
+        if (!secret.phpsessid) return no("ログイン情報(PHPSESSID)が未登録です。");
+        const day = state.days[dayKey(now)] || { count: 0 };
+        if ((day.count || 0) >= settings.dailyLimit) return no(`今日の上限(出品と更新を合わせて${settings.dailyLimit}回)に達しています。`);
+        const left = settings.minIntervalMin * 60e3 - (now - (g["lock:last"] || 0));
+        if (left > 0) return no(`前回の出品・更新から${settings.minIntervalMin}分たっていません(あと約${Math.ceil(left / 60e3)}分)。`);
+        if ((g["net:pauseUntil"] || 0) > now) return no(`${site.name}への通信を休止中です(あと約${Math.ceil((g["net:pauseUntil"] - now) / 60e3)}分)。`);
+        if (g.boostReserve) return no("すでに予約済みです。1分以内に実行されます。");
+        await st.put("boostReserve", { at: now, productId });
+        await adminLog(env, `${site.name}の「更新ボタンのテスト」を予約しました(${productId ? "商品 " + productId : "商品は自動で選ぶ"})`);
+        return json({ ok: true, at: now });
+      }
+      if (method === "GET") {
+        const g = await st.getMany(["boostReserve", "boostResult"]);
+        return json({ pending: g.boostReserve || null, result: g.boostResult || null });
+      }
+    }
     if (method === "POST" && sub[0] === "origin") {
       const { UA } = await import("./gc.mjs");
       const GC = site.origin;
