@@ -1,5 +1,7 @@
 // 自分の出品の売れ行き追跡。
-// ・記録対象は「このツールが出品した商品」だけ(過去の偏ったデータは使わない)
+// ・記録対象は「このツールが出品した商品」と「このツールが更新(一覧の先頭へ)した商品」だけ
+// ・最適化の学習単位は「1回の出品・1回の更新」。更新は一覧の先頭に出し直すことなので、出品と同じに扱う
+//   その1回の成果 = 次に同じ商品を更新するまで(最長48時間)の間に売れたか
 // ・売れた時刻 = 取引情報の「販売日時」(買い手が支払った時刻)
 //   売れた直後はチャットに未読があることが多く、開くと既読が付くため、
 //   まず「取引中に現れた時刻」を仮の販売時刻として記録し、
@@ -12,7 +14,7 @@ const SOLD = new Set(["支払完了", "商品お渡し", "受取評価待ち", "
 const CANCEL = new Set(["キャンセル", "未払キャンセル"]);
 // 購入ボタンは押されたが、まだ入金されていない状態
 const PENDING = new Set(["支払待ち", "支払い待ち", "支払確認中", "支払い確認中"]);
-export const PENDING_MS = 48 * 3600e3; // 出品から48時間は「結果待ち」
+export const PENDING_MS = 48 * 3600e3; // 出品・更新から最長48時間は「結果待ち」
 const KEEP_MS = 120 * 86400e3;
 const CHATS_PER_SCAN = 2;
 
@@ -31,10 +33,23 @@ export function addOwnListing(own, listingId, at, label) {
   if (!own.since) own.since = at;
 }
 
+// 更新に成功したら呼ぶ。商品を追跡対象に入れ(売れたかを確認するため)、更新1回を学習データに残す
+const BOOSTS_MAX = 6000;
+export function addOwnBoost(own, productId, at, label) {
+  if (!productId) return;
+  const r = own.records[productId];
+  if (!r) own.records[productId] = { l: at, s: null, sold: false, x: false, lb: (label || "").slice(0, 30), b: 1, t: at };
+  else r.t = at;
+  (own.boosts ||= []).push([String(productId), at]);
+  if (own.boosts.length > BOOSTS_MAX) own.boosts.splice(0, own.boosts.length - BOOSTS_MAX);
+  if (!own.since) own.since = at;
+}
+const lastTouch = (r) => Math.max(r.l || 0, r.t || 0);
+
 export async function scanOwn(store, session, fetcher, log, now = Date.now()) {
   const own = await loadOwn(store);
   const ids = Object.keys(own.records);
-  if (!ids.length) { own.lastScan = now; await saveOwn(store, own); log.info("売れ行き", "まだツールが出品した商品がないため、確認を省略しました"); return { skipped: "empty" }; }
+  if (!ids.length) { own.lastScan = now; await saveOwn(store, own); log.info("売れ行き", "まだツールが出品・更新した商品がないため、確認を省略しました"); return { skipped: "empty" }; }
 
   const report = { sold: 0, exact: 0, canceled: 0 };
   const tracking = Object.values(own.records);
@@ -46,14 +61,14 @@ export async function scanOwn(store, session, fetcher, log, now = Date.now()) {
   };
   const snap = {}; // 今回見えた全商品: id -> {状態, カテゴリ, タブ}
   const listAll = (label, tabKey, r) => {
-    const rows = r.items.map((x) => { snap[x.productId] = { st: x.status, cat: x.category, tab: tabKey, chat: x.chatId }; return `${x.productId}(${x.category === TARGET_CATEGORY ? "X" : x.category}・${x.status || "状態なし"}${x.unread ? "・未読あり" : ""}${own.records[x.productId] ? "・ツールの出品" : ""})`; });
+    const rows = r.items.map((x) => { snap[x.productId] = { st: x.status, cat: x.category, tab: tabKey, chat: x.chatId }; return `${x.productId}(${x.category === TARGET_CATEGORY ? "X" : x.category}・${x.status || "状態なし"}${x.unread ? "・未読あり" : ""}${own.records[x.productId] ? "・ツールが出品/更新" : ""})`; });
     log.debug("売れ行き", `${label}に並んでいる全商品: ${rows.join(" / ") || "なし"}`);
   };
   const handle = (it) => {
     if (it.category !== TARGET_CATEGORY) { ignored.cat++; return; }
     const r = own.records[it.productId];
-    if (!r) { ignored.notTool++; return; } // ツールが出品したもの以外は無視
-    log.debug("売れ行き", `ツールの出品を発見: 商品${it.productId}「${r.lb}」状態「${it.status}」(記録: ${r.sold ? (r.x ? "売れた・販売日時確定" : "売れた・仮の時刻") : "未販売"})`, { productId: it.productId, status: it.status, chatId: it.chatId, unread: it.unread });
+    if (!r) { ignored.notTool++; return; } // ツールが出品・更新したもの以外は無視
+    log.debug("売れ行き", `ツールが出品・更新した商品を発見: 商品${it.productId}「${r.lb}」状態「${it.status}」(記録: ${r.sold ? (r.x ? "売れた・販売日時確定" : "売れた・仮の時刻") : "未販売"})`, { productId: it.productId, status: it.status, chatId: it.chatId, unread: it.unread });
     if (PENDING.has(it.status) && !r.sold && !r.pw) {
       // 購入ボタンが押された(入金待ち)。この発見時刻を「購入時刻の目安」として残す
       r.pw = now;
@@ -109,7 +124,7 @@ export async function scanOwn(store, session, fetcher, log, now = Date.now()) {
     } else log.debug("売れ行き", "初回のため、次回からタブの中身の変化を記録します");
     // 「見えなくなった」の判定は取引中タブの商品だけ(完了タブは1ページ目しか見ないため、押し出された古い商品は対象外)
     own.snap = snap;
-    log.debug("売れ行き", `対象外として無視: 他カテゴリ(X以外)${ignored.cat}件・ツール以外の出品${ignored.notTool}件`, ignored);
+    log.debug("売れ行き", `対象外として無視: 他カテゴリ(X以外)${ignored.cat}件・ツールが出品も更新もしていない商品${ignored.notTool}件`, ignored);
 
     // 未読のない取引だけ、販売日時を取りに行く
     for (let i = 0; i < CHATS_PER_SCAN && own.chatQueue.length; i++) {
@@ -130,26 +145,44 @@ export async function scanOwn(store, session, fetcher, log, now = Date.now()) {
     if (e?.constructor?.name !== "PausedError") log.error("売れ行き", "売れ行きの確認中にエラーが起きました", { error: String(e.message || e) });
   }
 
-  for (const [pid, r] of Object.entries(own.records)) if (now - r.l > KEEP_MS) delete own.records[pid];
+  for (const [pid, r] of Object.entries(own.records)) if (now - lastTouch(r) > KEEP_MS) delete own.records[pid];
+  if (own.boosts) own.boosts = own.boosts.filter(([pid, t]) => now - t <= KEEP_MS && own.records[pid]);
   own.lastScan = now;
   await saveOwn(store, own);
   log.info("売れ行き", `確認完了: 新たに売れた${report.sold}件・販売日時で補正${report.exact}件・キャンセル${report.canceled}件・補正待ち残り${own.chatQueue.length}件`, report);
   return report;
 }
 
-// 曜日×時間(168マス)ごとの集計。成果 = 出品から48時間以内に売れたか
+// 曜日×時間(168マス)ごとの集計。
+// 学習の1件 = 1回の出品(ツールが出品した商品の出品時刻)、または1回の更新。
+// その1件の「持ち時間」は、次に同じ商品を更新するまで(最長48時間)。持ち時間の中で売れたら成功。
+// 持ち時間が終わっていなくて、まだ売れていないものは「結果待ち」。
 export function ownStats(own, now = Date.now()) {
   const cells = Array.from({ length: 168 }, () => ({ n: 0, sold: 0, hours: [] }));
   let pending = 0, eligible = 0, sold48 = 0, soldAll = 0, exact = 0;
   const buy = new Array(168).fill(0);
   for (const r of Object.values(own.records)) {
     if (r.sold) { soldAll++; if (r.x) exact++; if (r.s) { const q = jstParts(r.s); buy[q.wd * 24 + q.h]++; } }
-    const within = r.sold && r.s && r.s - r.l <= PENDING_MS;
-    if (!within && now - r.l < PENDING_MS) { pending++; continue; }
-    const p = jstParts(r.l), c = cells[p.wd * 24 + p.h];
-    c.n++; eligible++;
-    if (within) { c.sold++; sold48++; if (r.x) c.hours.push((r.s - r.l) / 3600e3); }
+  }
+  // 商品ごとに、出品・更新の時刻を古い順に並べる
+  const byPid = {};
+  for (const [pid, r] of Object.entries(own.records)) if (!r.b) (byPid[pid] ||= []).push(r.l);
+  for (const [pid, t] of own.boosts || []) if (own.records[pid]) (byPid[pid] ||= []).push(t);
+  let events = 0;
+  for (const [pid, times] of Object.entries(byPid)) {
+    const r = own.records[pid];
+    times.sort((a, b) => a - b);
+    for (let i = 0; i < times.length; i++) {
+      const t = times[i];
+      const end = Math.min(t + PENDING_MS, i + 1 < times.length ? times[i + 1] : Infinity);
+      events++;
+      const won = r.sold && r.s && r.s >= t && r.s < end;
+      if (!won && now < end) { pending++; continue; }
+      const p = jstParts(t), c = cells[p.wd * 24 + p.h];
+      c.n++; eligible++;
+      if (won) { c.sold++; sold48++; if (r.x) c.hours.push((r.s - t) / 3600e3); }
+    }
   }
   const days = own.since ? Math.floor((now - own.since) / 86400e3) : 0;
-  return { cells, pending, eligible, sold48, soldAll, exact, buy, days, since: own.since, total: Object.keys(own.records).length, waiting: own.chatQueue.length };
+  return { cells, pending, eligible, sold48, soldAll, exact, buy, days, since: own.since, total: events, products: Object.keys(own.records).length, waiting: own.chatQueue.length };
 }

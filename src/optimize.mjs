@@ -105,7 +105,7 @@ function normMix(a, b, wa) {
 // 自分のデータ量から、最適化がどれだけ信頼できるかを返す
 export function readiness(ownStats) {
   const own = ownStats.sold48 || 0;
-  return own < 15 ? { level: "low", note: `自分の売れたデータ ${own}件。あと少し集めると最適化できます(目安20件〜)。それまでは均等に出品します。` }
+  return own < 15 ? { level: "low", note: `自分の売れたデータ ${own}件。あと少し集めると最適化できます(目安20件〜)。それまでは24時間均等に更新します。` }
     : own < 50 ? { level: "mid", note: `自分の売れたデータ ${own}件。傾向が見え始めています。` }
     : { level: "high", note: `自分の売れたデータ ${own}件。十分です。` };
 }

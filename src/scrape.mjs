@@ -14,6 +14,17 @@ export function parseJst(str) {
   return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 9, +m[5]);
 }
 
+// HTMLの文字参照(&amp; など)を元の文字に戻す
+export function decodeEntities(s) {
+  return String(s || "")
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, "\u00a0").replace(/&yen;/g, "¥")
+    .replace(/&amp;/g, "&");
+}
+// タグを取り除いて文字だけにする(<br> は改行に)
+const textOf = (h) => decodeEntities(String(h || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, ""));
+
 // ===== マイページの一覧 =====
 export function parseListHtml(htmlText) {
   // 商品1件は <div class="item-row "> で始まる(item-row-top などと区別するため末尾の空白で判定)
@@ -34,6 +45,10 @@ export function parseListHtml(htmlText) {
       chatId: (r.match(/\/mypage\/chat\/(\d+)/) || [])[1] || null,
       price: Number(((r.match(/class="price">&yen;([\d,]+)/) || [])[1] || "").replace(/,/g, "")) || 0,
       unread: /class="btn[^"]*\bunread\b/.test(r),
+      // 更新する種類の見分けに使う(タイトル・説明・サムネイル)
+      title: textOf((r.match(/<h3>[\s\S]*?<a [^>]*>([\s\S]*?)<\/a>/) || [])[1]).trim(),
+      desc: textOf((r.match(/<div class="detail">([\s\S]*?)<\/div>/) || [])[1]),
+      thumb: (r.match(/<img [^>]*src="([^"]+)"[^>]*class="item-thumb"/) || [])[1] || "",
     });
   }
   return items;
