@@ -10,10 +10,6 @@ export function defaultSettings(site = DEFAULT_SITE) {
     graceMin: 100000, // 事実上無制限(予定を過ぎても出品する)
     minIntervalMin: site.minIntervalMin, // 「前回から○分あける」制限
     schedule: { mode: "interval", start: "00:00", end: "24:00", count: site.dailyLimit, manual: [] },
-    // 出品モードは「自分の売れ行きで最適化」だけ(データが少ないうちは均等に出品)
-    optimizeMode: "own",
-    // 更新の時刻の決め方: own=自分の売れ行きから毎日0時に作り直すスケジュール(データが少ないうちは24時間均等) / even=常に24時間均等
-    timeMode: "own",
   };
 }
 export const siteOfEnv = (env) => env.__site || DEFAULT_SITE;
@@ -41,7 +37,7 @@ export async function load(env, key) {
     if (old != null) { await store.put(key, old); v = old; }
   }
   // 上限と間隔はサイトのルールなので、保存値に関係なく常に固定値を使う
-  if (key === "settings") { const D = defaultSettings(siteOfEnv(env)); return { ...D, ...(v || {}), dailyLimit: D.dailyLimit, minIntervalMin: D.minIntervalMin, optimizeMode: "own", schedule: { ...D.schedule, ...(v?.schedule || {}) } }; }
+  if (key === "settings") { const D = defaultSettings(siteOfEnv(env)); return { ...D, ...(v || {}), dailyLimit: D.dailyLimit, minIntervalMin: D.minIntervalMin, schedule: { ...D.schedule, ...(v?.schedule || {}) } }; }
   if (key === "state") return { ...defaultState(), ...(v || {}) };
   if (key === "drafts") return v || [];
   if (key === "secret") return v || {};
@@ -62,11 +58,9 @@ export async function loadLogs(env, limit = 3000) {
 }
 
 // ===== 更新の予定枠 =====
-// 均等: 0:00〜24:00 を1日の上限回数で均等に割る(ゲームクラブは15回=96分おき)
-// 最適化: 自分の売れ行きから毎日0時に作り直すスケジュール(settings.schedule)を使う
+// 0:00〜24:00 を1日の上限回数で均等に割る(ゲームクラブは15回=96分おき)
 export function boostSlots(settings) {
   const limit = settings.dailyLimit;
-  if (settings.timeMode === "own") return computeSlots(settings.schedule, limit);
   return computeSlots({ mode: "interval", start: "00:00", end: "24:00", count: limit }, limit);
 }
 // 予定時刻を過ぎてもこの分数までは実行する。それより古い枠は見送る(まとめて連続で更新しないため)
@@ -98,9 +92,8 @@ export function planBoosts({ settings, state, now = Date.now(), max = 6 }) {
 }
 
 // 1分おきに呼ばれる。1回の処理で行う「重い仕事」(サイトへの複数回の通信)は1つだけにする。
-// 優先順: 画面からの「今すぐ1回更新」 → 予定枠の更新 → 自分の売れ行き確認(10分おき)
+// 優先順: 画面からの「今すぐ1回更新」 → 予定枠の更新。予定枠がない分は、サイトに一切通信しない
 const fmtHM = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
-const agoMin = (now, t) => (t ? Math.floor((now - t) / 60e3) + "分前" : "未実施");
 
 export async function tick(env, now = Date.now()) {
   const T0 = Date.now();
@@ -141,29 +134,16 @@ export async function tick(env, now = Date.now()) {
   if (settings.paused) {
     if (now - ((await store.get("lastPausedLog")) || 0) > 3600e3) {
       await store.put("lastPausedLog", now);
-      log.info("定期実行", `${nowLabel} ${site.name}の自動更新はオフです(売れ行き確認も止まっています)。このメッセージは1時間に1回だけ出ます`);
+      log.info("定期実行", `${nowLabel} ${site.name}の自動更新はオフです。このメッセージは1時間に1回だけ出ます`);
       await log.flush(store);
     }
     return { skipped: "paused" };
   }
 
-  const step = async (name, label, fn) => {
-    const t0 = Date.now();
-    const fetcher = createFetcher(store, log, { site });
-    log.debug("定期実行", `「${label}」を開始します`);
-    try { out[name] = await fn(fetcher); }
-    catch (e) { if (e?.constructor?.name !== "PausedError") log.error("システム", `「${label}」の処理中にエラーが起きました`, errInfo(e)); else log.warn("定期実行", `「${label}」は休止中・上限のため中断しました: ${e.message}`); out[name] = { error: e.message }; }
-    finally {
-      await fetcher.finish();
-      log.debug("定期実行", `「${label}」を終了しました(所要${Date.now() - t0}ms・通信${fetcher.made()}回・今日の通信累計${fetcher.count()}回)`);
-      await log.flush(store);
-    }
-  };
-
   try {
     const [state, secret, ts] = await Promise.all([
       load(env, "state"), load(env, "secret"),
-      store.getMany(["lastOwnScan", "lock:last", "lastOptimize"]),
+      store.getMany(["lock:last"]),
     ]);
     const slots = boostSlots(settings);
     const grace = boostGrace(slots);
@@ -177,10 +157,10 @@ export async function tick(env, now = Date.now()) {
 
     log.debug("定期実行", `${nowLabel} の定期実行を開始(処理番号 ${log.trace})`, {
       今日の回数: `${day.count || 0}/${settings.dailyLimit}`,
-      時刻の決め方: settings.timeMode === "own" ? "売れ行きで最適化" : "24時間で均等",
+      時刻: `24時間で均等(${slots.length}枠)`,
       次の予定枠: nextSlot != null ? fmtHM(nextSlot) : "今日はもうなし",
       [`${settings.minIntervalMin}分ルール`]: lockLeft ? `あと${Math.ceil(lockLeft / 60e3)}分は更新できない` : "更新できる",
-      売れ行き確認: agoMin(now, ts.lastOwnScan), ログイン情報: secret.phpsessid ? "登録済み" : "未登録",
+      ログイン情報: secret.phpsessid ? "登録済み" : "未登録",
     });
 
     // --- 1) 予定枠の更新 ---
@@ -207,22 +187,7 @@ export async function tick(env, now = Date.now()) {
       out.boost = await runBoost(env, { now, log, slot: due, deps });
       await log.flush(store);
     } else {
-      const ownDue = secret.phpsessid && now - (ts.lastOwnScan || 0) >= 10 * 60e3;
-      if (ownDue) {
-        log.info("定期実行", `${nowLabel} 判断: ${decision ? decision + " → " : ""}前回の売れ行き確認から10分以上たったので、自分の売れ行きを確認します`);
-        await store.put("lastOwnScan", now);
-        const { scanOwn } = await import("./own.mjs");
-        await step("own", "自分の売れ行き確認", (f) => scanOwn(store, secret.phpsessid, f, log, now));
-      } else {
-        log.debug("定期実行", `${nowLabel} 判断: ${decision || "予定枠なし"}。売れ行き確認(${agoMin(now, ts.lastOwnScan)})はまだ間隔内なので、今回は待機します`);
-      }
-    }
-
-    // --- 2) 自分の売れ行きからスケジュール再構築(1日1回・JST 0時台) ---
-    if (p.h === 0 && p.mi < 10 && ts.lastOptimize !== dk) {
-      await store.put("lastOptimize", dk);
-      log.info("定期実行", `${nowLabel} 判断: 0時台なので、自分の売れ行きからスケジュールを作り直します${settings.timeMode === "own" ? "" : "(今は「24時間で均等」を使っているので、更新の時刻は変わりません)"}`);
-      out.optimize = await rebuildSchedule(env, settings, log, now);
+      log.debug("定期実行", `${nowLabel} 判断: ${decision || "予定枠なし"}。サイトには通信せず待機します`);
     }
   } catch (e) {
     log.error("システム", "自動処理中にエラーが起きました", errInfo(e));
@@ -241,24 +206,4 @@ export async function tick(env, now = Date.now()) {
     }
   } catch {}
   return out;
-}
-
-// 自分の売れ行きから schedule.manual を作り直す(データ不足の間は均等)
-export async function rebuildSchedule(env, settings, log, now = Date.now()) {
-  const store = db(env);
-  const { evenSlots, recommendFromOwn, readiness } = await import("./optimize.mjs");
-  const { loadOwn, ownStats } = await import("./own.mjs");
-  const st = ownStats(await loadOwn(store), now);
-  const r = readiness(st);
-  let times, reason;
-  log.debug("最適化", `入力データ: 出品・更新${st.total}回(商品${st.products}件)・結果が出た${st.eligible}回・持ち時間(次の更新まで・最長48時間)の中で売れた${st.sold48}回・結果待ち${st.pending}回・集計${st.days}日目`, { 信頼度: r.level });
-  if (r.level === "low") { log.info("最適化", `自分データが不足のため、24時間均等の時刻にします(${r.note})`); times = evenSlots(settings.dailyLimit); reason = "own-low"; }
-  else { times = recommendFromOwn(st, { count: settings.dailyLimit, now }); reason = "own"; log.info("最適化", `自分の売れ行きからスケジュールを更新しました(${r.note})`, { times }); }
-  const s = await load(env, "settings");
-  const before = computeSlots(s.schedule, s.dailyLimit).map((m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`);
-  s.schedule = { ...s.schedule, mode: "manual", manual: times };
-  await save(env, "settings", s);
-  const added = times.filter((t) => !before.includes(t)), removed = before.filter((t) => !times.includes(t));
-  log.info("最適化", `スケジュールを保存しました(${times.length}枠): ${times.join(" ")}`, { 変更前: before.join(" "), 追加された時刻: added.join(" ") || "なし", 外された時刻: removed.join(" ") || "なし", 理由: reason });
-  return { times, reason };
 }

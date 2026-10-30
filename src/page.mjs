@@ -535,13 +535,11 @@ body.ed-open{overflow:hidden}
   <div class="tabs">
     <button data-tab="home" class="on">ホーム</button>
     <button data-tab="types">種類</button>
-    <button data-tab="analysis">分析</button>
     <button data-tab="logs">ログ</button>
     <button data-tab="settings">設定</button>
   </div>
   <div id="tab-home" class="tab"></div>
   <div id="tab-types" class="tab hide"></div>
-  <div id="tab-analysis" class="tab hide"></div>
   <div id="tab-logs" class="tab hide"></div>
   <div id="tab-settings" class="tab hide"></div>
 </div>
@@ -704,7 +702,6 @@ function switchTab(t) {
   $$(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
   $$(".tab").forEach((el) => el.classList.add("hide"));
   $("#tab-" + t).classList.remove("hide");
-  if (t === "analysis" && !analysisData) loadAnalysis().then(render).catch(() => {});
   if (t === "home") loadBoost().then(render);
   render();
 }
@@ -715,7 +712,6 @@ async function refresh(quiet) {
     state = await api("/state");
     clockOffset = state.now - Math.round((t0 + Date.now()) / 2); // 通信にかかった時間の半分を補正
     if (tab === "home") await loadBoost();
-    if (tab === "analysis" && !quiet) await loadAnalysis();
     quietRender = !!quiet; render(); quietRender = false;
   } catch (e) { if (!quiet) toast(e.message, true); }
 }
@@ -732,7 +728,6 @@ function render() {
   renderBanners();
   if (tab === "home") renderHome();
   if (tab === "types") renderTypes();
-  if (tab === "analysis") renderAnalysis();
   if (tab === "logs" && !$("#ops_list")) renderLogs();
   if (tab === "settings" && (!$("#tab-settings").children.length || !quietRender)) renderSettings();
 }
@@ -790,7 +785,7 @@ function dayTime(ms) {
 let boostInfo = null; // /boost の結果(今すぐ1回の予約・結果・履歴)
 async function loadBoost() { try { boostInfo = await api("/boost"); } catch { boostInfo = boostInfo || null; } }
 const KIND = { boosted: "更新しました", blocked: "確認画面で止められた", session: "ログイン切れ", unconfirmed: "送れたが未確認", unknown: "想定外の応答", notfound: "商品が見つからない", empty: "対象なし", nomatch: "一致する出品なし", notypes: "種類が未登録", limit: "今日の上限", interval: "間隔ルール", paused: "休止中", network: "通信エラー", expired: "予約切れ", nosession: "ログイン情報なし" };
-const timeModeText = (s) => (s.timeMode === "own" ? "売れ行きで最適化した時刻" : \`24時間で均等(約\${Math.round(1440 / Math.max(1, s.dailyLimit))}分おき)\`);
+const timeModeText = (s) => \`24時間で均等(約\${Math.round(1440 / Math.max(1, s.dailyLimit))}分おき)\`;
 
 // 次に更新される種類(一致0件の種類は飛ばす。一覧を読んでいなければ順番どおり)
 function nextTypeInfo() {
@@ -850,7 +845,7 @@ function renderHome() {
       </label>
       <dl class="dl">
         <dt>今日の回数</dt><dd>\${state.today.count} / \${s.dailyLimit} 回\${state.today.boosts && state.today.boosts !== state.today.count ? \` <span class="muted">(うち更新 \${state.today.boosts}回)</span>\` : ""}</dd>
-        <dt>時刻の決め方</dt><dd>\${esc(timeModeText(s))} <span class="muted">(分析タブで変更)</span></dd>
+        <dt>更新の時刻</dt><dd>\${esc(timeModeText(s))}</dd>
         <dt>ログイン状態</dt><dd>\${state.session.set ? "<span class='pill ok'>登録済み</span>" : "<span class='pill off'>未登録</span>"}</dd>
         <dt>起動のしかた</dt><dd>\${ext ? \`<span class='pill ok'>日本からの外部起動</span> <span class='muted'>\${Math.max(0, Math.round((nowMs() - state.ext.at) / 1000))}秒前</span>\` : "<span class='pill off'>外部起動が止まっています</span>"}</dd>
       </dl>
@@ -1021,28 +1016,6 @@ function renderTypes() {
   }));
 }
 
-// ---- 分析タブに付け足す: 更新の時刻の決め方 ----
-function timeModeCard(a) {
-  const s = state.settings, r = a.ready;
-  return \`<div class="card">
-    <h2>更新の時刻の決め方</h2>
-    <div class="seg"><button data-tm="even" class="\${s.timeMode !== "own" ? "on" : ""}">24時間で均等</button><button data-tm="own" class="\${s.timeMode === "own" ? "on" : ""}">売れ行きで最適化</button></div>
-    <div class="muted" style="margin:10px 0">\${s.timeMode === "own" ? "下の分析から毎日0時に作り直した時刻に更新します。データが足りない間は均等と同じになります。" : \`0:00から24:00までを\${s.dailyLimit}回で均等に割った時刻に更新します。\`}\${r.level === "low" ? " 今は売れ行きのデータが足りないため、どちらを選んでも均等になります。" : ""}</div>
-    <div class="slots">\${state.slots.map((m) => \`<span class="slot">\${hm2str(m)}</span>\`).join("")}</div>
-    \${s.timeMode === "own" ? '<button class="btn" id="sc_rebuild" style="margin-top:12px">今すぐ作り直す</button>' : ""}
-  </div>\`;
-}
-function bindTimeMode() {
-  $$("[data-tm]").forEach((b) => (b.onclick = async () => {
-    try { await api("/settings", { method: "POST", body: JSON.stringify({ timeMode: b.dataset.tm }) }); toast(b.dataset.tm === "own" ? "売れ行きで最適化した時刻にしました" : "24時間で均等にしました"); await refresh(); }
-    catch (err) { toast(err.message, true); }
-  }));
-  if ($("#sc_rebuild")) $("#sc_rebuild").onclick = async () => {
-    try { const r = await api("/rebuild", { method: "POST", body: "{}" }); toast(r.reason === "own-low" ? \`作り直しました(\${r.times.length}枠・データ不足のため均等)\` : \`作り直しました(\${r.times.length}枠)\`); analysisData = null; await refresh(); }
-    catch (e) { toast(e.message, true); }
-  };
-}
-
 // ---- 設定 ----
 function renderSettings() {
   $("#tab-settings").innerHTML = \`
@@ -1108,7 +1081,7 @@ function renderSettings() {
         return \`<dt>\${label}</dt><dd>拠点 \${esc(name(x.where.colo))}\${x.where.error ? \` ・ \${esc(x.where.error)}\` : ""}\${x.inJp ? "" : ' <span class="bad">(日本以外)</span>'}<br>\${gLine}\${r.chosen === x.name ? ' <span class="pill ok">使用中</span>' : ""}</dd>\`;
       }).join("");
       const verdict = r.ok
-        ? \`<div class="banner info" style="margin:10px 0 0"><div><b>日本から通信できています。</b>更新・売れ行き確認も、この保存領域から通信します\${r.changed ? "(今回切り替えました)" : ""}。</div></div>\`
+        ? \`<div class="banner info" style="margin:10px 0 0"><div><b>日本から通信できています。</b>更新も、この保存領域から通信します\${r.changed ? "(今回切り替えました)" : ""}。</div></div>\`
         : '<div class="banner warn" style="margin:10px 0 0"><div><b>日本から通れる保存領域が見つかりませんでした。</b>この結果のスクショを送ってください。</div></div>';
       window.Snd && (r.ok ? Snd.success() : Snd.fail());
       $("#st_originMsg").innerHTML = \`<dl class="dl">\${rows}</dl>\${verdict}\`;
@@ -1117,125 +1090,7 @@ function renderSettings() {
   };
 }
 
-let analysisData = null;
-async function loadAnalysis() { analysisData = await api("/analysis"); }
-
-// ---- 分析 ----
-const WD = ["日", "月", "火", "水", "木", "金", "土"];
-let anMetric = { own: "rate" };
-
-// 168マス(曜日×時間)の表。values[i] は数値 or null(データなし)。color[i] は 0〜1 の濃さ
-function grid(values, color, { fmt = (v) => v, hue = "pink", id = "g" } = {}) {
-  const css = getComputedStyle(document.body), cv = (n) => css.getPropertyValue(n).trim();
-  const rgb = hue === "green" ? cv("--g3") : hue === "cyan" ? cv("--c3") : "255,45,149";
-  let h = \`<div class="grid"><table><thead><tr><th class="wdh"></th>\`;
-  for (let hr = 0; hr < 24; hr++) h += \`<th>\${hr}</th>\`;
-  h += \`</tr></thead><tbody>\`;
-  for (let w = 0; w < 7; w++) {
-    h += \`<tr><th class="wdh">\${WD[w]}</th>\`;
-    for (let hr = 0; hr < 24; hr++) {
-      const i = w * 24 + hr, v = values[i];
-      const has = v !== null && v !== undefined;
-      const a = has ? 0.1 + 0.85 * Math.max(0, Math.min(1, color[i] || 0)) : 0;
-      const txt = has ? fmt(v) : "";
-      const dark = a > 0.55;
-      h += \`<td data-g="\${id}" data-i="\${i}" style="background:\${has ? \`rgba(\${rgb},\${a.toFixed(2)})\` : "transparent"};color:\${dark ? "var(--bg)" : "var(--ink)"}">\${txt}</td>\`;
-    }
-    h += \`</tr>\`;
-  }
-  return h + \`</tbody></table></div><div class="grid-detail" id="\${id}-detail">マスをタップすると詳細が出ます</div>\`;
-}
-const cellName = (i) => \`\${WD[Math.floor(i / 24)]}曜 \${Math.floor(i % 24)}時台\`;
-const norm01 = (arr) => { const v = arr.filter((x) => x !== null && x !== undefined); const mx = Math.max(...v, 0), mn = Math.min(...v, 0); return arr.map((x) => (x === null || x === undefined ? 0 : mx > mn ? (x - mn) / (mx - mn) : 0.5)); };
-
-function renderAnalysis() {
-  if (!analysisData) { $("#tab-analysis").innerHTML = "<div class='card'><div class='center'>分析データを読み込み中…</div></div>"; loadAnalysis().then(render).catch((e) => toast(e.message, true)); return; }
-  const a = analysisData;
-  $("#tab-analysis").innerHTML = \`
-    \${timeModeCard(a)}
-    <div id="an-body"></div>
-    <div class="card">
-      <h2>今すぐ確認</h2>
-      <div class="muted" style="margin-bottom:10px">通常は自動(自分の売れ行き10分おき)です。すぐ最新にしたいときに押してください。\${SN()}に負担をかけないよう、数十秒かかります。</div>
-      <button class="btn" id="an_scan">今すぐ確認する</button>
-      <div class="muted" id="an_scanMsg" style="margin-top:8px"></div>
-    </div>\`;
-  renderOwnView(a);
-  bindTimeMode();
-  $("#an_scan").onclick = async (e) => {
-    e.target.disabled = true; $("#an_scanMsg").textContent = "確認中…(30〜60秒かかります)";
-    try {
-      const r = await api("/scan", { method: "POST", body: "{}" });
-      const o = r.own || {};
-      $("#an_scanMsg").textContent = \`完了: 新たに売れた\${o.sold || 0}件・販売日時で補正\${o.exact || 0}件\`;
-      analysisData = null; await loadAnalysis(); renderAnalysis();
-    } catch (err) { $("#an_scanMsg").textContent = err.message; }
-    e.target.disabled = false;
-  };
-}
-
-function bindGrid(id, detailOf) {
-  $$(\`td[data-g="\${id}"]\`).forEach((td) => (td.onclick = () => {
-    $$(\`td[data-g="\${id}"].sel\`).forEach((x) => x.classList.remove("sel"));
-    td.classList.add("sel");
-    $(\`#\${id}-detail\`).innerHTML = detailOf(Number(td.dataset.i));
-  }));
-}
-
-function rankList(items, empty) {
-  if (!items.length) return \`<div class="center">\${empty}</div>\`;
-  return items.map((x, k) => \`<div class="rank"><span class="rk">\${k + 1}</span><span class="rn">\${x.name}</span><span class="rv">\${x.text}</span></div>\`).join("");
-}
-
-function renderOwnView(a) {
-  const o = a.own, r = a.ready;
-  const lv = { low: "データ不足", mid: "参考程度", high: "十分" };
-  const g = o.eligible ? o.sold48 / o.eligible : 0;
-  const metric = anMetric.own;
-  let values, color, fmt, hue, detail, ranking;
-  if (metric === "rate") {
-    values = o.cells.map((c) => (c.n ? c.sold / c.n : null));
-    const K = 2; color = norm01(o.cells.map((c) => (c.n ? (c.sold + K * g) / (c.n + K) : null)));
-    fmt = (v) => Math.round(v * 100); hue = "pink";
-    detail = (i) => { const c = o.cells[i]; return c.n ? \`<b>\${cellName(i)}</b> に出品・更新: \${c.n}回中 <b>\${c.sold}回</b> が持ち時間の中で売れた(\${Math.round((c.sold / c.n) * 100)}%)\${c.hours.length ? \` ・ 売れるまで平均\${(c.hours.reduce((x, y) => x + y, 0) / c.hours.length).toFixed(1)}時間\` : ""}\` : \`<b>\${cellName(i)}</b>: まだこの時間に出品・更新した結果がありません\`; };
-    ranking = o.cells.map((c, i) => ({ i, c })).filter((x) => x.c.n >= 2).sort((p, q) => q.c.sold / q.c.n - p.c.sold / p.c.n || q.c.n - p.c.n).slice(0, 10)
-      .map((x) => ({ name: cellName(x.i), text: \`\${Math.round((x.c.sold / x.c.n) * 100)}%(\${x.c.n}件中\${x.c.sold}件)\` }));
-  } else {
-    values = o.buy.map((v) => (v ? v : null)); color = norm01(o.buy); fmt = (v) => v; hue = "green";
-    detail = (i) => \`<b>\${cellName(i)}</b> に購入された: <b>\${o.buy[i]}件</b>\`;
-    ranking = o.buy.map((v, i) => ({ i, v })).filter((x) => x.v > 0).sort((p, q) => q.v - p.v).slice(0, 10).map((x) => ({ name: cellName(x.i), text: \`\${x.v}件\` }));
-  }
-  $("#an-body").innerHTML = \`
-    <div class="card">
-      <h2>概要 <span class="q">このツールが出品・更新した商品だけ。1回の出品・更新ごとに、次にその商品を更新するまで(最長48時間)に売れたかで成績をつけます</span></h2>
-      <dl class="dl">
-        <dt>集計開始</dt><dd>\${o.since ? fmtDate(o.since) + \`(\${o.days}日目)\` : "まだなし"}</dd>
-        <dt>出品・更新の回数</dt><dd>\${o.total} 回(商品 \${o.products ?? "?"} 件)</dd>
-        <dt>結果が出た回数</dt><dd>\${o.eligible} 回</dd>
-        <dt>持ち時間の中で売れた</dt><dd>\${o.sold48} 回(\${(g * 100).toFixed(1)}%)</dd>
-        <dt>結果待ち</dt><dd>\${o.pending} 回</dd>
-        <dt>売れた総数 / 正確な販売時刻</dt><dd>\${o.soldAll} 件 / \${o.exact} 件</dd>
-        <dt>販売日時の取得待ち</dt><dd>\${o.waiting} 件</dd>
-      </dl>
-      <div class="banner \${r.level === "high" ? "info" : "warn"}" style="margin:12px 0 0"><div><b>データの信頼度: \${lv[r.level]}</b><br>\${esc(r.note)}</div></div>
-    </div>
-    <div class="card">
-      <h2>曜日 × 時間</h2>
-      <div class="seg sm"><button data-m="rate" class="\${metric === "rate" ? "on" : ""}">売れた割合(出品・更新した時刻)</button><button data-m="buy" class="\${metric === "buy" ? "on" : ""}">買われた時刻</button></div>
-      <div class="muted" style="margin:8px 0">\${metric === "rate" ? "マスの数字=その曜日・時間に出品・更新したもののうち、持ち時間(次の更新まで・最長48時間)の中で売れた割合(%)。回数が少ないマスは色を控えめにしています。" : "マスの数字=その曜日・時間に実際に買われた件数。"}</div>
-      \${grid(values, color, { fmt, hue, id: "go" })}
-    </div>
-    <div class="card"><h2>\${metric === "rate" ? "売れやすい曜日×時間 上位10" : "よく買われる曜日×時間 上位10"}</h2>\${rankList(ranking, metric === "rate" ? "同じマスに2件以上の結果がたまると表示されます" : "購入の記録がたまると表示されます")}</div>
-    <div class="card"><h2>このデータから作ったスケジュール</h2><div class="slots">\${a.recommend.map((t) => \`<span class="slot">\${t}</span>\`).join("")}</div>
-      <div class="muted" style="margin-top:8px">\${r.level === "low" ? "データ不足のため、当面は均等になります。" : "「売れ行きで最適化」を選ぶと、毎日0時にこのスケジュールで更新します。"}</div></div>\`;
-  $$("[data-m]").forEach((b) => (b.onclick = () => { anMetric.own = b.dataset.m; renderAnalysis(); }));
-  bindGrid("go", detail);
-}
-
-// ---- ログ(リアルタイム) ----
-// ツールとの間に専用回線(WebSocket)を張り、ログが書かれた瞬間に受け取って、上から滑り込ませる。
-// 回線がつながらない環境では、5秒ごとに取りに行く方式に自動で切り替える。
-const LOG_CATS = ["すべて", "定期実行", "出品", "更新", "売れ行き", "最適化", "通信", "管理画面", "アクセス", "システム"];
+const LOG_CATS = ["すべて", "定期実行", "更新", "通信", "管理画面", "アクセス", "システム"];
 let opsBuf = [], opsIds = new Set(), opsNewest = "", opsCat = "すべて", opsLevel = "info", opsPaused = false, opsNet = null, opsOpen = new Set(), opsQ = "", opsTrace = "";
 let ws = null, wsState = "off", wsRetry = 0, wsTimer = null, wsPing = null, pollTimer = null, held = [];
 
@@ -1496,7 +1351,7 @@ function switchSite(id) {
   try { localStorage.setItem(SITE_KEY, id); } catch {}
   document.body.classList.add("site-" + site);
   // サイトごとのデータは全部読み直す
-  state = null; logs = null; analysisData = null; boostInfo = null;
+  state = null; logs = null; boostInfo = null;
   opsBuf = []; opsIds = new Set(); opsNewest = ""; opsNet = null; opsOpen = new Set(); opsTrace = ""; held = [];
   $$(".tab").forEach((el) => (el.innerHTML = ""));
   renderSites();

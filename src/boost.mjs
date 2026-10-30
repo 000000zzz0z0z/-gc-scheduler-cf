@@ -15,7 +15,6 @@
 // ・確認画面(blocked)・ログイン切れ(session)のときは警告を出して自動更新を止める(繰り返さない)
 import { gcFetch, readRes, dayKey } from "./gc.mjs";
 import { parseListHtml, parseMaxPage } from "./scrape.mjs";
-import { loadOwn, saveOwn, addOwnBoost } from "./own.mjs";
 
 export const BOOST_PATH = (id) => `/mypage/products/boost-product/${encodeURIComponent(id)}`;
 const LIST_PATH = "/mypage/products";
@@ -199,15 +198,6 @@ export async function runBoost(env, { now = Date.now(), log, slot = null, manual
     const sent = !!r.sent && !STOP.includes(r.kind);
     const counted = r.ok || r.kind === "unconfirmed";
 
-    // 売れ行きの学習データに「この時刻に更新した」を残す(最適化に使う)
-    if (r.ok) {
-      try {
-        const own = await loadOwn(store);
-        addOwnBoost(own, pick.item.productId, now, label || pick.item.title);
-        await saveOwn(store, own);
-        log.debug("売れ行き", `商品 ${pick.item.productId} の更新を、売れ行きの学習データに追加しました(学習データの更新回数 ${own.boosts.length}件)`);
-      } catch (e) { log.warn("売れ行き", "売れ行きの学習データへの追加に失敗しました", { error: String(e.message || e) }); }
-    }
     // 次の種類へ進める(送れたときだけ)。種類の最終更新時刻も記録する
     if (sent && !productId && pick.nextCursor !== undefined) await store.put("boost:cursor", pick.nextCursor);
     if (r.ok && pick.type) {

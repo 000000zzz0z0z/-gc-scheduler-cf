@@ -36,10 +36,7 @@ function authorized(request, env) {
 function mergeSettings(cur, body) {
   const s = JSON.parse(JSON.stringify(cur));
   if ("paused" in body) s.paused = !!body.paused;
-  if ("timeMode" in body) {
-    if (!["even", "own"].includes(body.timeMode)) throw new Error("時刻の決め方が正しくありません。");
-    s.timeMode = body.timeMode;
-  }
+
   return s;
 }
 
@@ -51,7 +48,7 @@ function who(request) {
   return { IP: request.headers.get("cf-connecting-ip") || "不明", 国: cf.country || "不明", 地域: cf.city || cf.region || undefined, 端末: dev, ブラウザ: br };
 }
 // 画面が数秒おきに自動で取りに来る通信は、記録すると大量になるので個別には残さない
-const POLLING = new Set(["GET /api/ops", "GET /api/state", "GET /api/analysis", "GET /api/logs", "POST /api/hello", "GET /api/overview"]);
+const POLLING = new Set(["GET /api/ops", "GET /api/state", "GET /api/logs", "POST /api/hello", "GET /api/overview"]);
 async function accessLog(env, request, lvl, msg, extra) {
   try { const { createLogger } = await import("./log.mjs"); const l = createLogger("access"); l[lvl]("アクセス", msg, { ...who(request), ...(extra || {}) }); await l.flush(db(env)); } catch {}
 }
@@ -284,29 +281,6 @@ async function handleApi(request, env, path, baseEnv = env) {
     }
     if (method === "POST" && sub[0] === "alert" && sub[1] === "clear") { const state = await load(env, "state"); state.alert = null; await save(env, "state", state); return json({ ok: true }); }
 
-    // ===== 分析(自分の売れ行き) =====
-    if (method === "GET" && sub[0] === "analysis") {
-      const store = db(env);
-      const { loadOwn, ownStats } = await import("./own.mjs");
-      const { recommendFromOwn, readiness } = await import("./optimize.mjs");
-      const settings = await load(env, "settings");
-      const now = Date.now();
-      const own = ownStats(await loadOwn(store), now);
-      return json({ now, ready: readiness(own), own, recommend: recommendFromOwn(own, { count: settings.dailyLimit, now }) });
-    }
-
-    // ===== スケジュールを今すぐ作り直す =====
-    if (method === "POST" && sub[0] === "rebuild") {
-      const { createLogger } = await import("./log.mjs");
-      const { rebuildSchedule } = await import("./core.mjs");
-      const log = createLogger("manual");
-      const s = await load(env, "settings");
-      log.info("管理画面", "「今すぐ作り直す」が押されました");
-      const r = await rebuildSchedule(env, s, log);
-      await log.flush(db(env));
-      return json({ ok: true, ...r });
-    }
-
     // ===== 両サイトの状態をまとめて(画面上部の切り替えボタン用) =====
     if (method === "GET" && sub[0] === "overview") {
       const { netStatus } = await import("./net.mjs");
@@ -336,27 +310,6 @@ async function handleApi(request, env, path, baseEnv = env) {
       if (before) return json({ ops: await store.listOpsBefore(Math.min(500, Number(url.searchParams.get("limit")) || 500), before), now });
       const r = store.opsWithNet ? await store.opsWithNet(limit, after, now) : { ops: await store.listOps(limit, after), net: await (await import("./net.mjs")).netStatus(store) };
       return json({ ...r, now });
-    }
-
-    // ===== 今すぐ確認(自分の売れ行き) =====
-    if (method === "POST" && sub[0] === "scan") {
-      const { createLogger } = await import("./log.mjs");
-      const { createFetcher } = await import("./net.mjs");
-      const store = db(env);
-      const log = createLogger("manual");
-      await log.enableLive(store);
-      log.info("管理画面", "「今すぐ確認」が押されました");
-      const fetcher = createFetcher(store, log, { site });
-      const out = {};
-      try {
-        const secret = await load(env, "secret");
-        if (secret.phpsessid) {
-          const { scanOwn } = await import("./own.mjs");
-          await store.put("lastOwnScan", Date.now());
-          out.own = await scanOwn(store, secret.phpsessid, fetcher, log);
-        } else throw new Error("先に設定タブでPHPSESSIDを登録してください。");
-      } finally { await fetcher.finish(); await log.flush(store); }
-      return json({ ok: true, ...out });
     }
 
     return json({ error: "見つかりません。" }, 404);
