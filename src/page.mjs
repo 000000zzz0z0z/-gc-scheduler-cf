@@ -477,7 +477,7 @@ body.ed-open{overflow:hidden}
 .lrow{grid-template-columns:64px 1fr auto}
 .trow:first-of-type,.lrow:first-of-type{border-top:0}
 .trow.is-next{background:linear-gradient(90deg,rgba(var(--c3),.08),transparent 70%);border-radius:var(--r2);padding-left:8px;padding-right:8px}
-.lrow.has{opacity:.72}
+.lrow.has{opacity:1}
 .tnum{font-size:22px;font-weight:800;line-height:1;color:var(--cyan);text-shadow:0 0 8px rgba(var(--c3),.5);min-width:1.4em;text-align:center;padding-top:6px;font-variant-numeric:tabular-nums}
 .tthumb{width:64px;height:64px;object-fit:cover;border-radius:10px;border:1px solid var(--line);background:var(--bg2);display:block}
 .tthumb.none{display:inline-block}
@@ -507,6 +507,34 @@ body.ed-open{overflow:hidden}
 .linkbtn:disabled{opacity:.6;cursor:default}
 .tfull{white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.7;color:var(--ink);background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:6px;max-height:460px;overflow:auto}
 .tfull.hide{display:none}
+
+/* 出品中の一覧(1件ずつ・10件ごと) */
+.lrow{grid-template-columns:34px 64px 1fr auto}
+.lpos{font-weight:800;font-size:15px;color:var(--mut);text-align:center;padding-top:20px;font-variant-numeric:tabular-nums}
+.ltags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}
+.ltag{font-size:10.5px;padding:2px 8px;border-radius:4px;background:rgba(var(--mut3),.16);color:var(--ink)}
+.ltag.deal{background:rgba(255,210,60,.18);color:var(--amber)}
+.lrow.is-target{opacity:1;border-radius:var(--r2);padding:12px 10px;border-top-color:transparent;background:linear-gradient(90deg,rgba(var(--g3),.14),rgba(var(--g3),.03) 70%);box-shadow:0 0 0 1px rgba(var(--g3),.75),0 0 22px rgba(var(--g3),.35);animation:tgtglow 2.4s ease-in-out infinite}
+.lrow.is-target + .lrow{border-top-color:transparent}
+.lrow.is-target .lpos{color:var(--green);text-shadow:0 0 8px rgba(var(--g3),.6)}
+.pill.tgt{font-weight:700}
+@keyframes tgtglow{0%,100%{box-shadow:0 0 0 1px rgba(var(--g3),.75),0 0 22px rgba(var(--g3),.35)}50%{box-shadow:0 0 0 1px rgba(var(--g3),.95),0 0 34px rgba(var(--g3),.55)}}
+.pager{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin:10px 0}
+.pg{min-width:38px;height:38px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:rgba(var(--panel3),.6);color:var(--ink);font:inherit;font-weight:700;cursor:pointer}
+.pg:hover:not(:disabled){border-color:rgba(var(--g3),.6)}
+.pg.on{background:var(--green);color:var(--on-green);border-color:var(--green);box-shadow:var(--glow-g)}
+.pg:disabled{opacity:.35;cursor:default}
+@media (max-width:640px){ .lrow{grid-template-columns:28px 52px 1fr} .lrow .tact{grid-column:3} .lpos{padding-top:14px;font-size:13px} }
+@media (prefers-reduced-motion:reduce){ .lrow.is-target{animation:none} }
+
+/* 今の設定のままなら、いずれ更新される出品(次の1件とは別の、脈打たない控えめな光り方) */
+.lrow.is-cand{border-radius:var(--r2);padding:12px 10px;border-top-color:transparent;background:linear-gradient(90deg,rgba(var(--c3),.09),transparent 75%);box-shadow:inset 3px 0 0 rgba(var(--c3),.85),0 0 0 1px rgba(var(--c3),.22)}
+.lrow.is-cand + .lrow{border-top-color:transparent}
+.lrow.is-cand .lpos{color:var(--cyan)}
+.lrow.is-cand + .lrow.is-cand{margin-top:6px}
+.lg{padding:0 6px;border-radius:5px;white-space:nowrap}
+.lg-t{color:var(--green);box-shadow:0 0 0 1px rgba(var(--g3),.75),0 0 10px rgba(var(--g3),.35)}
+.lg-c{color:var(--cyan);box-shadow:inset 3px 0 0 rgba(var(--c3),.85),0 0 0 1px rgba(var(--c3),.25)}
 </style>
 </head>
 <body>
@@ -733,7 +761,7 @@ function render() {
   tickClock();
   renderBanners();
   if (tab === "home") renderHome();
-  if (tab === "types") renderTypes();
+  if (tab === "types" && !(quietRender && document.querySelector("#tab-types .tfull:not(.hide)"))) renderTypes();
   if (tab === "logs" && !$("#ops_list")) renderLogs();
   if (tab === "settings" && (!$("#tab-settings").children.length || !quietRender)) renderSettings();
 }
@@ -804,6 +832,25 @@ function nextTypeInfo() {
     if (c === null || c === undefined || c > 0) return { type: t, count: c, skipped: k };
   }
   return { type: null };
+}
+
+// 次に自動で更新される出品(次の種類に一致する出品のうち、取引中を除いて一覧の一番下)
+function nextTarget() {
+  const nt = nextTypeInfo();
+  const snap = state.snapshot;
+  if (!nt || !nt.type || !snap) return null;
+  const hits = snap.items.filter((x) => x.key === nt.type.key && !/取引/.test(x.status || ""));
+  return hits.length ? hits.reduce((a, b) => (b.position > a.position ? b : a)) : null;
+}
+const LIST_PER = 10; // 出品中の一覧の1ページの件数(ゲームクラブと同じ)
+let listPage = 1;
+function pagerHtml(cur, pages) {
+  if (pages <= 1) return "";
+  const b = (p, label, dis, on, aria) => \`<button class="pg \${on ? "on" : ""}" data-pg="\${p}" \${dis ? "disabled" : ""} aria-label="\${aria || p + "ページ目"}">\${label}</button>\`;
+  let h = b(1, "«", cur === 1, false, "最初のページ") + b(cur - 1, "‹", cur === 1, false, "前のページ");
+  for (let p = 1; p <= pages; p++) h += b(p, p, false, p === cur);
+  h += b(cur + 1, "›", cur === pages, false, "次のページ") + b(pages, "»", cur === pages, false, "最後のページ");
+  return \`<div class="pager">\${h}</div>\`;
 }
 
 function slotChips() {
@@ -973,30 +1020,36 @@ function renderTypes() {
     </div>\`;
   }).join("");
 
-  // 一覧は「同じ内容(タイトル+説明)」ごとにまとめて表示する
+  // 出品中の一覧は1件ずつ、ゲームクラブと同じく10件ごとのページで表示する。次に更新される1件を光らせる
+  const tgt = nextTarget();
   let listHtml = \`<div class="center">まだ読み込んでいません。「出品中の一覧を読み込む」を押してください。</div>\`;
+  let pagerTop = "", pagerBottom = "", tgtJump = "";
   if (snap) {
-    const groups = [];
-    const byKey = {};
-    for (const x of snap.items) {
-      if (!byKey[x.key]) { byKey[x.key] = { key: x.key, items: [] }; groups.push(byKey[x.key]); }
-      byKey[x.key].items.push(x);
-    }
-    listHtml = groups.map((g) => {
-      const x = g.items[0], t = typeOf[g.key];
-      const free = g.items.filter((y) => !/取引/.test(y.status || ""));
-      const pos = g.items.map((y) => \`\${y.position + 1}\`).join("・");
-      return \`<div class="lrow \${t ? "has" : ""}">
+    const items = snap.items;
+    const pages = Math.max(1, Math.ceil(items.length / LIST_PER));
+    listPage = Math.min(Math.max(1, listPage), pages);
+    const tgtPage = tgt ? Math.floor(tgt.position / LIST_PER) + 1 : null;
+    if (tgt) tgtJump = \`<button class="btn sm" id="ty_jump">次に更新する出品を表示(\${tgtPage}ページ目・\${tgt.position + 1}番目)</button>\`;
+    listHtml = items.slice((listPage - 1) * LIST_PER, listPage * LIST_PER).map((x) => {
+      const t = typeOf[x.key];
+      const isT = tgt && tgt.productId === x.productId;
+      const deal = /取引/.test(x.status || "");
+      const isC = !isT && t && !deal; // 今の設定のままなら、いずれ更新される出品
+      return \`<div class="lrow \${t ? "has" : ""} \${isT ? "is-target" : ""} \${isC ? "is-cand" : ""}" \${isT ? 'id="ty_target"' : ""}>
+        <div class="lpos">\${x.position + 1}</div>
         \${thumb(x.thumb)}
         <div class="tinfo">
+          <div class="ltags">\${isT ? '<span class="pill ok tgt">▲ 次に更新</span>' : ""}\${x.status ? \`<span class="ltag \${deal ? "deal" : ""}">\${esc(x.status)}</span>\` : ""}\${t ? \`<span class="pill rep">種類「\${esc(t.label)}」\${deal ? "・取引中のため対象外" : ""}</span>\` : ""}</div>
           <div class="ttitle">\${esc(x.title)}</div>
           <div class="tdesc">\${esc(x.descHead)}</div>
-          \${fullBtn(g.key)}
-          <div class="tmeta">\${g.items.length}件(一覧の\${pos}番目)\${free.length !== g.items.length ? \` ・ うち取引中 \${g.items.length - free.length}件\` : ""}</div>
+          \${fullBtn(x.key)}
+          <div class="tmeta">商品 \${esc(x.productId)}\${x.at ? \` ・ 最後の更新 \${fmtDate(x.at)}\` : ""}\${x.price ? \` ・ ¥\${Number(x.price).toLocaleString()}\` : ""}</div>
         </div>
-        <div class="tact">\${t ? \`<span class="pill ok">種類「\${esc(t.label)}」</span>\` : \`<button class="btn sm p" data-add="\${esc(x.productId)}">種類に追加</button>\`}</div>
+        <div class="tact">\${t ? "" : \`<button class="btn sm p" data-add="\${esc(x.productId)}">種類に追加</button>\`}</div>
       </div>\`;
     }).join("") || \`<div class="center">出品中の商品がありません。</div>\`;
+    pagerTop = pagerHtml(listPage, pages);
+    pagerBottom = pagerHtml(listPage, pages);
   }
 
   $("#tab-types").innerHTML = \`
@@ -1007,12 +1060,14 @@ function renderTypes() {
     </div>
     <div class="card">
       <h2>出品中の一覧 <span class="q">\${snap ? \`\${fmtDate(snap.at)}に読み込み ・ \${snap.items.length}件\` : ""}</span></h2>
-      <div class="muted" style="margin-bottom:10px">同じタイトル・説明の出品は1つにまとめています。最大5ページ(50件)まで読みます。読み込みには数十秒かかります(サイトに負担をかけないよう、ページの間に数秒あけるため)。</div>
-      <button class="btn" id="ty_refresh">出品中の一覧を読み込む</button>
-      <div style="margin-top:12px">\${listHtml}</div>
+      <div class="muted" style="margin-bottom:10px">ゲームクラブの「出品中」と同じ並び(上ほど最近更新・下ほど昔)で、5ページ目(50件)まで表示します。<span class="lg lg-t">強く光っている1件</span>が次に自動で更新される出品(種類の順番で、その種類に一致する出品のうち一番下のもの)、<span class="lg lg-c">控えめに光っている出品</span>が今の設定のままならいずれ更新される出品(登録した種類に一致し、取引中でないもの\${snap ? \`・5ページ目までで\${snap.items.filter((y) => typeOf[y.key] && !/取引/.test(y.status || "")).length}件\` : ""})です。一覧は、自動更新が1回動くたびと、下のボタンを押したときに最新になります。読み込みには数十秒かかります(サイトに負担をかけないよう、ページの間に数秒あけるため)。</div>
+      <div class="row"><button class="btn" id="ty_refresh">出品中の一覧を読み込む</button>\${tgtJump}</div>
+      <div id="ty_list" style="margin-top:12px">\${pagerTop}\${listHtml}\${pagerBottom}</div>
     </div>\`;
 
   bindFull();
+  $$("[data-pg]").forEach((b) => (b.onclick = () => { listPage = Number(b.dataset.pg); renderTypes(); $("#ty_list") && $("#ty_list").scrollIntoView({ behavior: "smooth", block: "start" }); }));
+  if ($("#ty_jump")) $("#ty_jump").onclick = () => { listPage = Math.floor(tgt.position / LIST_PER) + 1; renderTypes(); const el = $("#ty_target"); el && el.scrollIntoView({ behavior: "smooth", block: "center" }); };
   $("#ty_refresh").onclick = async (e) => {
     e.target.disabled = true; e.target.textContent = "読み込み中…";
     try { const r = await api("/listing/refresh", { method: "POST", body: "{}" }); toast(\`読み込みました(\${r.snapshot.items.length}件)\`); await refresh(); }

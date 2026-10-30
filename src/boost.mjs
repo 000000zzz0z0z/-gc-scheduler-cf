@@ -19,7 +19,7 @@ import { parseListHtml, parseMaxPage, thumbTagOf } from "./scrape.mjs";
 export const BOOST_PATH = (id) => `/mypage/products/boost-product/${encodeURIComponent(id)}`;
 const LIST_PATH = "/mypage/products";
 const FLASH_OK = /更新しました/;
-export const MAX_PAGES = 5; // 出品中の一覧は最大5ページ(50件)まで見る
+export const MAX_PAGES = 5; // 出品中の一覧は5ページ目(50件)まで読む。それより後ろの出品は更新の対象にしない(本人の希望)
 export const RESERVE_TTL = 10 * 60e3; // 画面からの「今すぐ1回更新」の予約の期限
 const HISTORY_MAX = 60;
 // これらの結果のときは、その予定枠は再挑戦しない
@@ -67,23 +67,30 @@ async function readPage(session, fetcher, page) {
   return { ok: true, html: r.text, items: parseListHtml(r.text), maxPage: parseMaxPage(r.text) };
 }
 
-// 出品中の一覧を最大 MAX_PAGES ページ読み、上から順の位置(position)と指紋(key)を付けて返す
+// 出品中の一覧を5ページ目まで読み、上から順の位置(position)と指紋(key)を付けて返す。
+// ページ送りは途中までの番号しか出ないことがあるので、読んだページごとに最後のページ番号を見直す。
+// 一覧は「最後に更新(出品)した時刻が新しい順」なので、いちばん下 = いちばん昔に更新したもの。
 export async function readOnsale(session, fetcher, log) {
   const p1 = await readPage(session, fetcher, 1);
   if (!p1.ok) return p1;
-  const last = Math.min(p1.maxPage || 1, MAX_PAGES);
+  let last = p1.maxPage || 1;
   const raw = [...p1.items];
-  for (let p = 2; p <= last; p++) {
+  const seen = new Set(p1.items.map((x) => x.productId));
+  let p = 2;
+  for (; p <= Math.min(last, MAX_PAGES); p++) {
     const r = await readPage(session, fetcher, p);
     if (!r.ok) return r;
-    raw.push(...r.items);
+    if (!r.items.length) break;
+    for (const x of r.items) if (!seen.has(x.productId)) { seen.add(x.productId); raw.push(x); } // 読んでいる途中に並びが動いても二重にしない
+    last = Math.max(last, r.maxPage || 1);
   }
+  const pages = p - 1;
   // サムネイルが表示されないときの調査用に、1件目の画像タグの生のHTMLを残す
   if (log) { const tag = thumbTagOf(p1.html); log.debug("更新", `一覧1件目のサムネイル: ${p1.items[0]?.thumb ? "URLを取得できました" : "URLを取得できませんでした"}`, { 画像タグ: tag.slice(0, 400) || "見つからない", 取り出したURL: p1.items[0]?.thumb || "なし" }); }
-  if ((p1.maxPage || 1) > MAX_PAGES) log && log.warn("更新", `出品中が${p1.maxPage}ページあります。${MAX_PAGES + 1}ページ目以降の出品は更新の対象に入りません`);
+  log && log.debug("更新", `出品中の一覧を${pages}ページ目まで読みました(${raw.length}件${last > MAX_PAGES ? `・全${last}ページのうち${MAX_PAGES + 1}ページ目以降は対象外` : ""})`);
   const items = [];
   for (let i = 0; i < raw.length; i++) items.push({ ...raw[i], position: i, key: await fingerprint(raw[i].title, raw[i].desc) });
-  return { ok: true, items, pages: last, maxPage: p1.maxPage || 1 };
+  return { ok: true, items, pages, maxPage: last };
 }
 
 // 説明の全文は、同じ内容(指紋)ごとに1つずつ別に保存する(画面の「全文を表示」で使う)。
@@ -113,7 +120,7 @@ export function refreshTypeLooks(types, items) {
 
 // 画面表示用に小さくした一覧(説明は先頭だけ)
 export function snapshotOf(items, now) {
-  return { at: now, items: items.map((x) => ({ productId: x.productId, position: x.position, status: x.status, title: x.title.slice(0, 120), descHead: x.desc.trim().slice(0, 160), descLen: normText(x.desc).length, thumb: x.thumb, key: x.key })) };
+  return { at: now, items: items.map((x) => ({ productId: x.productId, position: x.position, status: x.status, title: x.title.slice(0, 120), descHead: x.desc.trim().slice(0, 100), descLen: normText(x.desc).length, thumb: x.thumb, key: x.key, at: x.listedAt || null, price: x.price || 0 })) };
 }
 
 // 一覧の中で、出どころの違う文字(サイトのメッセージ)を1つ拾う(成功の文言が無かったときの手がかり用)
