@@ -134,7 +134,19 @@ export async function publishNext(env, { now = Date.now(), draftKey = null, slot
   const result = await publishDraft(draft, { phpsessid: secret.phpsessid, cf: secret.cf, ua: secret.ua, chua: secret.chua, extra: secret.extra }, { now, fetcher: pubFetcher });
   await pubFetcher.finish();
   if (result.ok) ownLog.info("出品", `出品に成功しました: 「${draft.label}」→ 出品番号 ${result.listingId}(通信の出どころ ${result.colo || "不明"})`, { listingId: result.listingId, url: result.url, status: result.status, colo: result.colo });
-  else ownLog.error("出品", `出品に失敗しました: 「${draft.label}」${result.message}`, { kind: result.kind, status: result.status, colo: result.colo });
+  else {
+    ownLog.error("出品", `出品に失敗しました: 「${draft.label}」${result.message}`, { kind: result.kind, status: result.status, colo: result.colo });
+    // 失敗の原因を詳しく残す(次の切り分け用)。秘密は gc.mjs 側で伏せ済み
+    if (result.diag) {
+      const d = result.diag;
+      ownLog.error("出品", `失敗の詳細: ${d.kind}(ステータス${d.status})`, {
+        応答の種類: d.kind, サーバー: d.server, "cf-ray": d.cfRay, "cf-mitigated": d.cfMitigated,
+        応答の形式: d.contentType, 応答の大きさ: d.bodyBytes + "バイト",
+        ページ名: d.title || undefined, 送った項目: (d.sentFields || []).join(", "),
+        応答の中身の先頭: d.bodyHead || undefined,
+      });
+    }
+  }
   if (!result.ok && SAFE_TO_RELEASE.includes(result.kind)) { await store.release(lock.prev); ownLog.debug("出品", `${site.name}に出品は作られていないため、ロックを戻しました(すぐ再挑戦できます)`); }
   else if (!result.ok) ownLog.debug("出品", `出品が作られた可能性を否定できないため、ロックは戻しません(${settings.minIntervalMin}分後に再挑戦)`);
 

@@ -103,13 +103,25 @@ export function buildMultipart(fields, prefix = DEFAULT_SITE.boundary) {
 // 出品期限(limit_day / limit_time)を常に遠い未来(約100年後)に設定する。
 // サイトのフォームは日時が必須のため「無期限」そのものにはできないが、
 // 100年後にすることで、期限切れで出品が消えることは実質なくなる。
+// サイトのフォームが増やした「空でよい項目」。古い下書きに無ければ空で足す。
+// (2026-10下旬にゲームクラブのフォームへ notify_user_id が追加された。送らないと弾かれることがある)
+const AUTO_EMPTY_FIELDS = ["notify_user_id"];
 export function prepareFields(fields, now) {
   const p = jstParts(now + 100 * 365 * 24 * 3600e3);
-  return fields.map((f) => {
+  const out = fields.map((f) => {
     if (f.name === "limit_day") return { ...f, value: `${p.y}-${pad(p.mo)}-${pad(p.d)}` };
     if (f.name === "limit_time") return { ...f, value: String(p.h) };
     return f;
   });
+  for (const name of AUTO_EMPTY_FIELDS) {
+    if (!out.some((f) => f.name === name)) {
+      // だいたいブラウザが送る位置(notice_information の後ろ)に入れる。無ければ末尾寄り
+      const at = out.findIndex((f) => f.name === "notice_information");
+      const item = { name, value: "" };
+      if (at >= 0) out.splice(at + 1, 0, item); else out.push(item);
+    }
+  }
+  return out;
 }
 
 export function cleanSession(s) {
@@ -187,6 +199,34 @@ const plain = (html) =>
     .replace(/\s+/g, " ")
     .trim();
 
+// 失敗した応答から、原因の手がかりを安全に取り出す。
+// 秘密(PHPSESSID・cf_clearance・トークンらしき長い文字列)は伏せる。本文は先頭だけ。
+function sanitize(s) {
+  return String(s || "")
+    .replace(/PHPSESSID=[^;\s"']+/gi, "PHPSESSID=***")
+    .replace(/cf_clearance=[^;\s"']+/gi, "cf_clearance=***")
+    .replace(/[A-Za-z0-9_-]{40,}/g, "***");
+}
+function buildDiag(res, text, fieldNames) {
+  const h = (n) => res.headers.get(n) || "";
+  const title = (text.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || "";
+  const body = plain(text).slice(0, 1200);
+  // 確認画面(Cloudflare)か、サイト独自のエラーか
+  const isCf = !!h("cf-mitigated") || /Just a moment|cf-chl|challenge-platform|Attention Required|cf-error/i.test(text);
+  return {
+    kind: isCf ? "cloudflareの確認画面" : "サイトの応答",
+    status: res.status,
+    server: h("server"),
+    cfRay: h("cf-ray"),
+    cfMitigated: h("cf-mitigated") || undefined,
+    contentType: h("content-type"),
+    bodyBytes: text.length,
+    title: sanitize(title).slice(0, 200),
+    bodyHead: sanitize(body),
+    sentFields: fieldNames, // 送った項目の「名前」だけ(値は入れない)
+  };
+}
+
 function summarizeErrors(j) {
   const flat = (v) => (v == null ? [] : typeof v === "object" ? Object.values(v).flatMap(flat) : [String(v)]);
   const parts = [];
@@ -224,7 +264,8 @@ export async function publishDraft(draft, session, { now = Date.now(), fetcher =
   const r0 = await readRes(res);
   const colo = (res.headers.get("cf-ray") || "").split("-").pop() || "";
   const r = { ...r0, colo };
-  if (r.kind === "blocked") return { ok: false, kind: "blocked", status: r.status, colo, message: `Cloudflareにアクセスを拒否されました(確認画面・通信の出どころ ${colo || "不明"})。` };
+  const fieldNames = fields.map((f) => f.name);
+  if (r.kind === "blocked") return { ok: false, kind: "blocked", status: r.status, colo, message: `Cloudflareにアクセスを拒否されました(確認画面・通信の出どころ ${colo || "不明"})。`, diag: buildDiag(res, r.text, fieldNames) };
   if (r.kind === "session") return { ok: false, kind: "session", status: r.status, colo, message: "ログイン状態が切れています。設定からPHPSESSIDを貼り直してください。" };
   let json = null;
   try { json = JSON.parse(r.text); } catch {}
@@ -237,7 +278,7 @@ export async function publishDraft(draft, session, { now = Date.now(), fetcher =
   }
   const detail = json ? summarizeErrors(json) : plain(r.text).slice(0, 300);
   const message = `${detail || "空の応答"}(ステータス${r.status})`;
-  return { ok: false, kind: res.status === 422 ? "invalid" : "unknown", status: r.status, message };
+  return { ok: false, kind: res.status === 422 ? "invalid" : "unknown", status: r.status, message, diag: buildDiag(res, r.text, fieldNames) };
 }
 
 // 出品せずに、ログイン状態とアクセス可否だけを確かめる
