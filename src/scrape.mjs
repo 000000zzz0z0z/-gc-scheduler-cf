@@ -25,6 +25,26 @@ export function decodeEntities(s) {
 // タグを取り除いて文字だけにする(<br> は改行に)
 const textOf = (h) => decodeEntities(String(h || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, ""));
 
+// 商品サムネイルのURLを取り出す。
+// 一覧のHTMLは遅延読み込みのため、src には読み込み中の仮画像(preloader など)が入り、
+// 本物のURLは data-src などに入っていることがある。本物らしいものを優先して選ぶ。
+const THUMB_ATTRS = ["data-src", "data-original", "data-lazy-src", "data-lazy", "srcset", "src"];
+export function thumbTagOf(rowHtml) {
+  return (String(rowHtml || "").match(/<img\b[^>]*class="(?:[^"]*\s)?item-thumb(?:\s[^"]*)?"[^>]*>/) || [])[0] || "";
+}
+export function pickThumb(rowHtml) {
+  const tag = thumbTagOf(rowHtml);
+  for (const a of THUMB_ATTRS) {
+    let v = (tag.match(new RegExp(`\\s${a}="([^"]+)"`)) || [])[1];
+    if (!v) continue;
+    v = decodeEntities(v).trim().split(/\s+/)[0]; // srcset は最初のURLだけ
+    if (/preloader|placeholder|loading|spacer|blank\.|^data:/i.test(v)) continue;
+    if (v.startsWith("//")) v = "https:" + v;
+    if (/^https?:\/\//i.test(v)) return v;
+  }
+  return "";
+}
+
 // ===== マイページの一覧 =====
 export function parseListHtml(htmlText) {
   // 商品1件は <div class="item-row "> で始まる(item-row-top などと区別するため末尾の空白で判定)
@@ -48,7 +68,7 @@ export function parseListHtml(htmlText) {
       // 更新する種類の見分けに使う(タイトル・説明・サムネイル)
       title: textOf((r.match(/<h3>[\s\S]*?<a [^>]*>([\s\S]*?)<\/a>/) || [])[1]).trim(),
       desc: textOf((r.match(/<div class="detail">([\s\S]*?)<\/div>/) || [])[1]),
-      thumb: (r.match(/<img [^>]*src="([^"]+)"[^>]*class="item-thumb"/) || [])[1] || "",
+      thumb: pickThumb(r),
     });
   }
   return items;

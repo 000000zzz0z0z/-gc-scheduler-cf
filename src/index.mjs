@@ -175,7 +175,7 @@ async function handleApi(request, env, path, baseEnv = env) {
     if (method === "POST" && sub[0] === "listing" && sub[1] === "refresh") {
       const { createLogger } = await import("./log.mjs");
       const { createFetcher } = await import("./net.mjs");
-      const { readOnsale, snapshotOf } = await import("./boost.mjs");
+      const { readOnsale, snapshotOf, saveDescs, refreshTypeLooks } = await import("./boost.mjs");
       const store = db(env);
       const secret = await load(env, "secret");
       if (!secret.phpsessid) throw new Error("先に設定タブでPHPSESSIDを登録してください。");
@@ -188,9 +188,23 @@ async function handleApi(request, env, path, baseEnv = env) {
         if (!r.ok) throw new Error(r.message);
         const snap = snapshotOf(r.items, Date.now());
         await store.put("boost:snapshot", snap);
+        const saved = await saveDescs(store, r.items);
+        const types = (await store.get("boost:types")) || [];
+        if (refreshTypeLooks(types, r.items)) await store.put("boost:types", types);
+        log.debug("更新", `説明の全文を保存しました(新しく${saved}種類)`);
         log.info("更新", `出品中の一覧を読み込みました(${r.items.length}件・${r.pages}ページ)`);
         return json({ ok: true, snapshot: snap, pages: r.pages, maxPage: r.maxPage });
       } finally { await fetcher.finish(); await log.flush(store); }
+    }
+
+    // ===== 説明の全文(画面の「全文を表示」用。サイトには通信しない) =====
+    if (method === "GET" && sub[0] === "listing" && sub[1] === "desc") {
+      const key = String(new URL(request.url).searchParams.get("key") || "");
+      if (!/^[0-9a-f]{64}$/.test(key)) throw new Error("指定が正しくありません。");
+      const { DESC_PREFIX } = await import("./boost.mjs");
+      const desc = await db(env).get(DESC_PREFIX + key);
+      if (desc == null) return json({ ok: false, message: "全文がまだ保存されていません。「出品中の一覧を読み込む」を押してください。" });
+      return json({ ok: true, desc });
     }
 
     // ===== 更新する種類(タイトル+説明で見分ける) =====

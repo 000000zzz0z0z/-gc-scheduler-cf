@@ -501,6 +501,12 @@ body.ed-open{overflow:hidden}
 .hrow-m{min-width:0;overflow-wrap:anywhere}
 .hrow.ok .hrow-m{color:var(--ink)}
 .hrow.ng .hrow-m{color:#ff8a8a}
+
+/* 説明の全文 */
+.linkbtn{background:none;border:0;padding:2px 0;margin-top:4px;color:var(--green);font:inherit;font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.linkbtn:disabled{opacity:.6;cursor:default}
+.tfull{white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.7;color:var(--ink);background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:6px;max-height:460px;overflow:auto}
+.tfull.hide{display:none}
 </style>
 </head>
 <body>
@@ -914,7 +920,32 @@ function watchBoost(since) {
 }
 
 // ---- 種類 ----
-function thumb(src) { return src ? \`<img class="tthumb" src="\${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer">\` : \`<span class="tthumb none"></span>\`; }
+function thumb(src) { return src ? \`<img class="tthumb" src="\${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'tthumb none',title:'画像を読み込めませんでした'}))">\` : \`<span class="tthumb none" title="画像のURLを取得できませんでした"></span>\`; }
+// 説明の全文(同じ内容ごとにサーバーに保存してあるものを、押したときだけ取りに行く)
+const descCache = {};
+let fullSeq = 0;
+function fullBtn(key) {
+  if (!key) return "";
+  const id = "f" + (++fullSeq);
+  return \`<button class="linkbtn" data-full="\${esc(key)}" data-box="\${id}">全文を表示</button><div class="tfull hide" id="\${id}"></div>\`;
+}
+function bindFull() {
+  $$("[data-full]").forEach((b) => (b.onclick = async () => {
+    const box = document.getElementById(b.dataset.box);
+    if (!box) return;
+    if (!box.classList.contains("hide")) { box.classList.add("hide"); b.textContent = "全文を表示"; return; }
+    const key = b.dataset.full;
+    if (descCache[key] === undefined) {
+      b.disabled = true; b.textContent = "読み込み中…";
+      try { const r = await api(\`/listing/desc?key=\${encodeURIComponent(key)}\`); if (!r.ok) { toast(r.message, true); b.disabled = false; b.textContent = "全文を表示"; return; } descCache[key] = r.desc; }
+      catch (e) { toast(e.message, true); b.disabled = false; b.textContent = "全文を表示"; return; }
+      b.disabled = false;
+    }
+    box.textContent = descCache[key];
+    box.classList.remove("hide");
+    b.textContent = "閉じる";
+  }));
+}
 
 function renderTypes() {
   const types = state.types || [], counts = state.counts || {}, snap = state.snapshot;
@@ -930,6 +961,7 @@ function renderTypes() {
         <div class="tlabel">\${esc(t.label)}\${isNext ? ' <span class="pill ok">次はこれ</span>' : ""}</div>
         <div class="ttitle">\${esc(t.title)}</div>
         <div class="tdesc">\${esc(t.descHead)}</div>
+        \${fullBtn(t.key)}
         <div class="tmeta">\${c === null || c === undefined ? '<span class="muted">一致件数: 一覧を読み込むと表示</span>' : c ? \`一致 <b>\${c}</b>件\` : '<span class="bad">一致 0件(飛ばします)</span>'} ・ 更新 \${t.boosted || 0}回\${t.lastAt ? \` ・ 最後 \${ago(t.lastAt)}\` : ""}</div>
       </div>
       <div class="tact">
@@ -959,6 +991,7 @@ function renderTypes() {
         <div class="tinfo">
           <div class="ttitle">\${esc(x.title)}</div>
           <div class="tdesc">\${esc(x.descHead)}</div>
+          \${fullBtn(g.key)}
           <div class="tmeta">\${g.items.length}件(一覧の\${pos}番目)\${free.length !== g.items.length ? \` ・ うち取引中 \${g.items.length - free.length}件\` : ""}</div>
         </div>
         <div class="tact">\${t ? \`<span class="pill ok">種類「\${esc(t.label)}」</span>\` : \`<button class="btn sm p" data-add="\${esc(x.productId)}">種類に追加</button>\`}</div>
@@ -979,6 +1012,7 @@ function renderTypes() {
       <div style="margin-top:12px">\${listHtml}</div>
     </div>\`;
 
+  bindFull();
   $("#ty_refresh").onclick = async (e) => {
     e.target.disabled = true; e.target.textContent = "読み込み中…";
     try { const r = await api("/listing/refresh", { method: "POST", body: "{}" }); toast(\`読み込みました(\${r.snapshot.items.length}件)\`); await refresh(); }

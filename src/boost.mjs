@@ -14,7 +14,7 @@
 // ・ログイン情報は PHPSESSID だけを送る(通行証や追加ヘッダーは使わない)
 // ・確認画面(blocked)・ログイン切れ(session)のときは警告を出して自動更新を止める(繰り返さない)
 import { gcFetch, readRes, dayKey } from "./gc.mjs";
-import { parseListHtml, parseMaxPage } from "./scrape.mjs";
+import { parseListHtml, parseMaxPage, thumbTagOf } from "./scrape.mjs";
 
 export const BOOST_PATH = (id) => `/mypage/products/boost-product/${encodeURIComponent(id)}`;
 const LIST_PATH = "/mypage/products";
@@ -78,10 +78,37 @@ export async function readOnsale(session, fetcher, log) {
     if (!r.ok) return r;
     raw.push(...r.items);
   }
+  // サムネイルが表示されないときの調査用に、1件目の画像タグの生のHTMLを残す
+  if (log) { const tag = thumbTagOf(p1.html); log.debug("更新", `一覧1件目のサムネイル: ${p1.items[0]?.thumb ? "URLを取得できました" : "URLを取得できませんでした"}`, { 画像タグ: tag.slice(0, 400) || "見つからない", 取り出したURL: p1.items[0]?.thumb || "なし" }); }
   if ((p1.maxPage || 1) > MAX_PAGES) log && log.warn("更新", `出品中が${p1.maxPage}ページあります。${MAX_PAGES + 1}ページ目以降の出品は更新の対象に入りません`);
   const items = [];
   for (let i = 0; i < raw.length; i++) items.push({ ...raw[i], position: i, key: await fingerprint(raw[i].title, raw[i].desc) });
   return { ok: true, items, pages: last, maxPage: p1.maxPage || 1 };
+}
+
+// 説明の全文は、同じ内容(指紋)ごとに1つずつ別に保存する(画面の「全文を表示」で使う)。
+// 一覧(snapshot)は画面が30秒おきに取りに来るので、全文は入れずに小さく保つ。
+export const DESC_PREFIX = "boost:desc:";
+export async function saveDescs(store, items) {
+  const uniq = {};
+  for (const x of items) if (x.key && !uniq[x.key]) uniq[x.key] = x.desc || "";
+  const keys = Object.keys(uniq);
+  if (!keys.length) return 0;
+  const have = await store.getMany(keys.map((k) => DESC_PREFIX + k));
+  let n = 0;
+  for (const k of keys) if (have[DESC_PREFIX + k] == null) { await store.put(DESC_PREFIX + k, uniq[k].replace(/^\s+|\s+$/g, "")); n++; }
+  return n;
+}
+// 登録済みの種類の見た目(サムネイル・タイトル)を、最新の一覧に合わせる
+export function refreshTypeLooks(types, items) {
+  let changed = false;
+  for (const t of types) {
+    const x = items.find((y) => y.key === t.key);
+    if (!x) continue;
+    if (x.thumb && x.thumb !== t.thumb) { t.thumb = x.thumb; changed = true; }
+    if (x.title && x.title !== t.title) { t.title = x.title; changed = true; }
+  }
+  return changed;
 }
 
 // 画面表示用に小さくした一覧(説明は先頭だけ)
@@ -179,6 +206,7 @@ export async function runBoost(env, { now = Date.now(), log, slot = null, manual
     const list = await readOnsale(session, fetcher, log);
     if (!list.ok) return await finish({ ...list, sent: false }, { lockPrev: lock.prev, release: true });
     await store.put("boost:snapshot", snapshotOf(list.items, now));
+    await saveDescs(store, list.items).catch(() => {});
 
     let pick;
     if (productId) {

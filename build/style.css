@@ -493,3 +493,9 @@ body.ed-open{overflow:hidden}
 .hrow-m{min-width:0;overflow-wrap:anywhere}
 .hrow.ok .hrow-m{color:var(--ink)}
 .hrow.ng .hrow-m{color:#ff8a8a}
+
+/* 説明の全文 */
+.linkbtn{background:none;border:0;padding:2px 0;margin-top:4px;color:var(--green);font:inherit;font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.linkbtn:disabled{opacity:.6;cursor:default}
+.tfull{white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.7;color:var(--ink);background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:6px;max-height:460px;overflow:auto}
+.tfull.hide{display:none}
