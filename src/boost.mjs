@@ -30,15 +30,19 @@ function noticeOf(html) {
 // 一覧から更新する商品を選ぶ。
 // 指定がなければ、1ページ目の「取引中でない」商品のうち、いちばん下のものを選ぶ
 // (先頭へ移動したかどうかが一番はっきり分かるため)。
+// 一覧の状態表示(item-status dealing)には、出品中の商品でも「出品中」と入っている(2026-10-31 実物で確認)。
+// 「取引」を含む状態(取引中など)のときだけ、更新の対象から外す。
+export const isDealing = (x) => /取引/.test(x.status || "");
+
 export function pickTarget(items, wanted = "") {
-  const free = items.filter((x) => !x.status);
+  const free = items.filter((x) => !isDealing(x));
   if (wanted) {
     const hit = items.find((x) => x.productId === wanted);
     if (!hit) return { ok: false, kind: "notfound", message: `商品番号 ${wanted} が「出品中」の1ページ目に見つかりませんでした。` };
-    if (hit.status) return { ok: false, kind: "notfound", message: `商品番号 ${wanted} は「${hit.status}」のため更新しません。` };
+    if (isDealing(hit)) return { ok: false, kind: "notfound", message: `商品番号 ${wanted} は「${hit.status}」のため更新しません。` };
     return { ok: true, item: hit, picked: "指定", position: items.indexOf(hit) };
   }
-  if (!free.length) return { ok: false, kind: "empty", message: "「出品中」に更新できる商品がありません(取引中でない商品が1ページ目にありません)。" };
+  if (!free.length) return { ok: false, kind: "empty", message: `「出品中」の1ページ目に、取引中でない商品がありません(読めた商品${items.length}件・状態: ${[...new Set(items.map((x) => x.status || "表示なし"))].join("/") || "なし"})。` };
   const item = free[free.length - 1];
   return { ok: true, item, picked: "自動(1ページ目のいちばん下)", position: items.indexOf(item) };
 }
